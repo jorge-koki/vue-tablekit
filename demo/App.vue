@@ -36,9 +36,11 @@ import type { GroupingPresetId } from './grouping'
 import { useDemoLog } from './log'
 import DemoControls from './DemoControls.vue'
 import DemoEventLog from './DemoEventLog.vue'
+import DemoFullscreenExit from './DemoFullscreenExit.vue'
 import DemoShortcuts from './DemoShortcuts.vue'
 import DemoStats from './DemoStats.vue'
 import DemoStatusPicker from './DemoStatusPicker.vue'
+import DemoZoomStepper from './DemoZoomStepper.vue'
 
 /**
  * La pantalla de la demo, en tres partes.
@@ -268,6 +270,63 @@ const rowSelection = shallowRef(false)
 /** Mover columnas arrastrando el encabezado. Encendido, igual que el componente. */
 const columnReorder = shallowRef(true)
 const dense = shallowRef(false)
+
+/**
+ * Zoom de la tabla, en escala natural.
+ *
+ * El estado vive acá y no adentro del componente a propósito, y es lo que la
+ * prop promete: el zoom es un `v-model` como `sort` o `selectedRows`. Quién
+ * decide a qué escala se ve una tabla depende de la aplicación —puede ser una
+ * preferencia de la persona, de la pantalla o de la sesión—, y el componente no
+ * tiene manera de saber cuál de las tres. Por eso tampoco se persiste con el
+ * resto del layout.
+ */
+const zoom = shallowRef(1)
+
+/**
+ * Si la tabla ocupa la pantalla completa.
+ *
+ * El estado vive acá por lo mismo que el zoom: es un `v-model`. Pero este además
+ * lo escribe la TABLA, y ese es el punto que conviene mirar. El navegador puede
+ * salir de pantalla completa por su cuenta —ESC, F11, cambiar de pestaña—, y
+ * cuando eso pasa nadie de esta pantalla se entera: la tabla lo detecta con
+ * `fullscreenchange` y lo anuncia por `update:fullscreen`. Sin ese aviso, este
+ * `ref` quedaría en `true` sobre una ventana normal y el botón dejaría de
+ * responder.
+ */
+const fullscreen = shallowRef(false)
+
+/**
+ * El gesto va por los MÉTODOS y no por el modelo, a propósito.
+ *
+ * Entrar en pantalla completa exige activación del usuario: el navegador solo
+ * concede el pedido que sale del mismo turno de la pila que el clic. Escribir
+ * `fullscreen.value = true` también funciona —la tabla observa la prop de forma
+ * sincrónica—, pero mete el re-render del padre entre el gesto y el pedido.
+ * Llamar al método es el camino corto, y es para lo que está.
+ */
+function toggleFullscreen(): void {
+  if (fullscreen.value) exitFullscreen()
+  else table.value?.enterFullscreen()
+}
+
+/**
+ * Salir, sin la rama del toggle.
+ *
+ * Es lo que escucha el botón de la barra `#toolbar`, que solo se renderiza
+ * estando en pantalla completa: lo que necesita es la llamada, no la decisión.
+ * Va por el método por la misma razón que el toggle, y hay una extra: ese botón
+ * se borra a sí mismo cuando el modelo vuelve a `false`, de modo que pasar por
+ * el modelo sería pedirle a un nodo que ya se fue que termine el trabajo.
+ */
+function exitFullscreen(): void {
+  table.value?.exitFullscreen()
+}
+
+/** La salida que no pidió nadie de esta pantalla. Se registra para que se vea. */
+watch(fullscreen, (activa) => {
+  logEvent('info', activa ? 'Pantalla completa' : 'Fuera de pantalla completa')
+})
 
 /**
  * Alto de fila: fijo, o uno por fila según la prioridad.
@@ -586,6 +645,8 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:radius-border="radiusBorder"
             v-model:dense="dense"
             v-model:row-height-mode="rowHeightMode"
+            v-model:zoom="zoom"
+            v-model:fullscreen="fullscreen"
             v-model:grouping-preset="groupingPreset"
             v-model:selection-mode="selectionMode"
             v-model:column-selection="columnSelection"
@@ -602,6 +663,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             @expand-all="expandAllGroups"
             @collapse-all="collapseAllGroups"
             @reset-layout="resetLayout"
+            @toggle-fullscreen="toggleFullscreen"
           />
         </div>
       </section>
@@ -641,6 +703,8 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             :column-selection="columnSelection"
             :row-selection="rowSelection"
             :dense="dense"
+            v-model:zoom="zoom"
+            v-model:fullscreen="fullscreen"
             :row-height="rowHeight"
             :selection-mode="selectionMode"
             :focus-ring="focusRing"
@@ -671,6 +735,26 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             @group-toggle="onGroupToggle"
             @rows-request="onRowsRequest"
           >
+            <!--
+              La barra de encabezado de la tabla. La caja la pone la librería;
+              lo que va adentro lo decide esta pantalla, y son dos cosas: el
+              MISMO escalón de zoom que está en el riel de controles —con el
+              mismo modelo— y la salida de pantalla completa.
+
+              Es lo que hace que la pantalla completa sirva para algo: ahí el
+              riel de controles no está, y sin esta barra la tabla quedaría sin
+              una sola vía para cambiar el zoom ni para volver.
+
+              La salida se renderiza solo estando adentro, y quien lo decide es
+              `fullscreen`, que es de esta pantalla. Esa es también la razón de
+              que la librería no traiga el botón: no es dueña del modelo que
+              diría cuándo mostrarlo.
+            -->
+            <template #toolbar>
+              <DemoZoomStepper v-model="zoom" />
+              <DemoFullscreenExit :active="fullscreen" @exit="exitFullscreen" />
+            </template>
+
             <!--
               Editor por slot. El `v-if` por clave de columna es el patrón que
               corresponde cuando hay más de una columna con `editor: 'slot'`: el slot

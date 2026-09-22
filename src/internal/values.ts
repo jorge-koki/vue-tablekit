@@ -1,4 +1,5 @@
 import type { CellValue, DataTableColumn } from '../types'
+import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './constants'
 
 /**
  * Primitivas de valor de celda compartidas por el camino de pintado y el editor.
@@ -218,4 +219,21 @@ export function clamp(value: number, min: number, max: number): number {
   if (value < min) return min
   if (value > max) return max
   return value
+}
+
+/**
+ * Reduce un factor de zoom declarado a uno con el que se puedan hacer cuentas.
+ *
+ * Un valor que no es un número finito y positivo NO se acota, se descarta: la
+ * escala natural es una respuesta con sentido a `NaN`, mientras que acotarlo
+ * devolvería {@link MIN_ZOOM} y la tabla arrancaría al 50% por un `undefined`
+ * que se coló en un `computed` del consumidor.
+ *
+ * El resto sí se acota, porque un 500% pedido de más sigue siendo una intención
+ * legible: el usuario quiere el máximo. Ver {@link MIN_ZOOM} para por qué esa
+ * banda y por qué el cero no puede pasar.
+ */
+export function normalizeZoom(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return DEFAULT_ZOOM
+  return clamp(raw, MIN_ZOOM, MAX_ZOOM)
 }

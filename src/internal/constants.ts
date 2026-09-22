@@ -50,6 +50,25 @@ export const DENSE_HEADER_HEIGHT = 34
  */
 export const DEFAULT_OVERSCAN = 4
 
+/** Factor de zoom cuando no se pasa `zoom`: escala natural. */
+export const DEFAULT_ZOOM = 1
+
+/**
+ * Banda dentro de la que se acota el factor de `zoom`.
+ *
+ * Son los extremos de la escalera que ofrece cualquier hoja de cálculo —del 50%
+ * al 200%—, y no una elección arbitraria: por debajo del 50% el texto de una
+ * celda deja de ser legible en cualquier tipografía, y por encima del 200% una
+ * fila ocupa tanto viewport que la tabla deja de leerse como una tabla.
+ *
+ * El piso tiene además una función estructural: el arrastre de redimensionado
+ * DIVIDE por este factor para volver a espacio base. Un factor de cero o
+ * negativo produciría anchos infinitos o invertidos, y acotar contra un piso
+ * positivo es lo que hace imposible que eso llegue a la cuenta.
+ */
+export const MIN_ZOOM = 0.5
+export const MAX_ZOOM = 2
+
 /** Ancho en px aplicado a una columna que no declara el suyo. */
 export const DEFAULT_COLUMN_WIDTH = 150
 

@@ -52,8 +52,13 @@ const columnas: DataTableColumn<Empleado>[] = [
 - **Columnas anclables, redimensionables, ocultables y reordenables**, con el layout guardado y un
   menú propio en cada encabezado si lo quieres.
 - **Alturas de fila distintas**, decididas por tú fila por fila.
+- **Zoom del 50% al 200%**, como el de una hoja de cálculo. Escala las métricas en vez de transformar
+  píxeles, así que el puntero sigue cayendo donde apuntas y los anchos guardados no se inflan.
+- **Pantalla completa** con la Fullscreen API del navegador, no con un `position: fixed` que
+  cualquier ancestro con `transform` deja encerrado en su panel. Con una barra propia para poner tus
+  controles, que es lo único que queda a la vista ahí adentro.
 - **Datos del servidor**: pide los tramos que le faltan mientras haces scroll.
-- **Ocho tipos de celda**, temas claro / oscuro, y el color principal en una línea:
+- **Nueve tipos de celda**, temas claro / oscuro, y el color principal en una línea:
   `.dt-root { --dt-primary: #8b5cf6 }`.
 
 ## Documentación

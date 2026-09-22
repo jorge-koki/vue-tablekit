@@ -50,8 +50,29 @@ export interface ResolvedColumn<TRow> {
   key: string
   /** Texto del header ya resuelto (`column.label ?? column.key`). */
   label: string
-  /** Ancho final en px, ya acotado por min/max. */
+  /**
+   * Ancho PINTADO en px: ya acotado por min/max y ya escalado por el zoom.
+   *
+   * Es la única medida que el camino de pintado necesita, y es deliberado que
+   * lleve el zoom adentro: el header, las celdas, el editor, el recuadro del
+   * rango y la búsqueda binaria horizontal trabajan todos contra píxeles reales
+   * de pantalla, así que ninguno de ellos tiene que enterarse de que el zoom
+   * existe.
+   */
   width: number
+  /**
+   * El mismo ancho SIN escalar: el número que se guarda.
+   *
+   * Existe por una sola razón, y es la que hace que el zoom no corrompa nada:
+   * el estado de anchos —el v-model, el layout persistido— vive en píxeles base
+   * para siempre. Guardar {@link ResolvedColumn.width} significaría que un
+   * usuario que ajusta una columna al 150% y vuelve al 100% se encuentra con
+   * columnas infladas, y que cada ciclo las infla un poco más.
+   *
+   * Lo consume el arrastre de redimensionado, que es el único que necesita
+   * volver de espacio de pantalla a espacio base.
+   */
+  baseWidth: number
   /** Posición horizontal en px respecto del borde izquierdo del canvas. */
   offset: number
   /** Índice dentro del tramo visible, en el orden vigente. */
@@ -119,6 +140,17 @@ export interface UseColumnLayoutOptions<TRow> {
    */
   pinning?: MaybeRefOrGetter<ColumnPinState>
   /**
+   * Factor por el que se multiplican los anchos AL RESOLVERLOS. Por defecto 1.
+   *
+   * Se aplica aquí, en el último paso de la cadena, y nunca sobre el estado:
+   * {@link UseColumnLayoutOptions.widths} y `column.width` siguen siendo
+   * píxeles base. Ver {@link ResolvedColumn.baseWidth}.
+   *
+   * Un valor que no sea finito y positivo se descarta y se usa 1. No es
+   * cortesía: el cero llegaría como divisor al camino de redimensionado.
+   */
+  zoom?: MaybeRefOrGetter<number>
+  /**
    * Espacio reservado a la izquierda de la primera columna, en px.
    *
    * Es el ancho de la regleta de numeración. Se suma aquí y no en cada consumidor
@@ -168,7 +200,16 @@ export interface UseColumnLayoutReturn<TRow> {
   }>
   /** Devuelve el tramo de columnas que intersecta la franja horizontal visible. */
   findColumnRange(scrollLeft: number, viewportWidth: number, overscan: number): ColumnRange
-  /** Pide un ancho nuevo. Devuelve el ancho efectivo tras acotarlo. */
+  /**
+   * Pide un ancho nuevo, en píxeles BASE. Devuelve el ancho efectivo tras
+   * acotarlo, también en píxeles base.
+   *
+   * La unidad importa y es la mitad del contrato del zoom: quien llama desde un
+   * arrastre recibe el delta en píxeles de pantalla y tiene que dividirlo por el
+   * factor ANTES de llegar acá. Así el acotado por `minWidth` / `maxWidth`
+   * ocurre en el mismo espacio en el que esos límites están declarados, y un
+   * piso de 80px sigue siendo 80px al 50% y al 200%.
+   */
   setColumnWidth(key: string, width: number): number
   /**
    * Columna resuelta por clave, o `null` si está oculta o es desconocida.
@@ -211,6 +252,20 @@ export interface UseColumnLayoutReturn<TRow> {
 export function useColumnLayout<TRow>(
   options: UseColumnLayoutOptions<TRow>,
 ): UseColumnLayoutReturn<TRow> {
+  /**
+   * El factor vigente, ya reducido a algo con lo que se puede multiplicar.
+   *
+   * La guarda se repite acá aunque el componente ya acote su prop, y a
+   * propósito: este composable es autónomo y su contrato dice "un factor no
+   * válido no escala nada". Sin la guarda, un `0` que llegue por cualquier vía
+   * colapsaría todas las columnas a ancho cero y el layout quedaría sin
+   * geometría, que es un modo de fallar mucho peor que ignorar el pedido.
+   */
+  function zoomFactor(): number {
+    const raw = toValue(options.zoom ?? 1)
+    return Number.isFinite(raw) && raw > 0 ? raw : 1
+  }
+
   /**
    * Columnas en el orden vigente, ocultas incluidas.
    *
@@ -257,6 +312,7 @@ export function useColumnLayout<TRow>(
     const fallbackWidth =
       Number.isFinite(rawFallback) && rawFallback > 0 ? rawFallback : DEFAULT_COLUMN_WIDTH
     const widths = toValue(options.widths)
+    const zoom = zoomFactor()
 
     const leading = toValue(options.leadingOffset ?? 0)
 
@@ -300,13 +356,18 @@ export function useColumnLayout<TRow>(
         typeof override === 'number' && Number.isFinite(override)
           ? override
           : (column.width ?? fallbackWidth)
-      const width = clampColumnWidth(declared, column)
+      // Acotar primero y escalar después, nunca al revés: los límites están
+      // declarados en píxeles base, así que aplicarlos sobre un ancho ya
+      // escalado los movería con el zoom.
+      const baseWidth = clampColumnWidth(declared, column)
+      const width = baseWidth * zoom
 
       resolved.push({
         column,
         key: column.key,
         label: column.label ?? column.key,
         width,
+        baseWidth,
         offset,
         index: resolved.length,
         // El renderer puede proponer una alineación (una columna numérica va

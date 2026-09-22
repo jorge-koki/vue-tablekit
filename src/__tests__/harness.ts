@@ -39,6 +39,7 @@ import type {
 } from '../types'
 import { defaultAlignFor } from '../internal/renderers'
 import { DEFAULT_HEADER_HEIGHT, DENSE_HEADER_HEIGHT } from '../internal/constants'
+import { normalizeZoom } from '../internal/values'
 import { FakeResizeObserver, flushFrames } from './fakes'
 
 /**
@@ -107,6 +108,9 @@ export function resolveColumns(
       key: column.key,
       label: column.label ?? column.key,
       width,
+      // El andamiaje del pool no zoomea: el pool consume píxeles pintados y no
+      // sabe que el zoom existe. Base y pintado coinciden.
+      baseWidth: width,
       offset,
       index: resolved.length,
       align: column.align ?? defaultAlignFor(column.renderer) ?? 'left',
@@ -428,11 +432,22 @@ function forceClientSize(element: HTMLElement, size: ViewportSize): void {
   Object.defineProperty(element, 'clientHeight', { configurable: true, value: size.height })
 }
 
-/** El alto de encabezado que va a resolver el componente con estas props. */
+/**
+ * El alto de encabezado que va a resolver el componente con estas props.
+ *
+ * Lleva el `zoom` puesto porque el componente escala sus métricas al
+ * resolverlas: sin él, un test con zoom pediría 400px de filas y recibiría otra
+ * cosa, y la cuenta que ese test protege dejaría de poder leerse de un vistazo.
+ */
 function headerHeightOf(props: TableProps | undefined): number {
   const declared = props?.headerHeight
-  if (typeof declared === 'number' && Number.isFinite(declared) && declared > 0) return declared
-  return props?.dense ? DENSE_HEADER_HEIGHT : DEFAULT_HEADER_HEIGHT
+  const base =
+    typeof declared === 'number' && Number.isFinite(declared) && declared > 0
+      ? declared
+      : props?.dense
+        ? DENSE_HEADER_HEIGHT
+        : DEFAULT_HEADER_HEIGHT
+  return base * normalizeZoom(props?.zoom)
 }
 
 /**
@@ -507,6 +522,8 @@ export type TableProps = Simplify<DataTableProps<GridRow> & TableListeners>
  */
 export interface TableSlots {
   editor?: (props: CellEditorSlotProps<GridRow>) => VNode
+  /** Contenido de la barra de encabezado. Sin él, la barra no se renderiza. */
+  toolbar?: () => VNode
 }
 
 /** Opciones de {@link mountTable}. */
@@ -560,6 +577,8 @@ function imperativeApi(wrapper: VueWrapper): DataTableInstance {
     toggleGroup: (groupId) => call('toggleGroup', groupId),
     expandAllGroups: () => call('expandAllGroups'),
     collapseAllGroups: () => call('collapseAllGroups'),
+    enterFullscreen: () => call('enterFullscreen'),
+    exitFullscreen: () => call('exitFullscreen'),
   }
 }
 

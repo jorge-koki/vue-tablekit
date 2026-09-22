@@ -1010,6 +1010,70 @@ export interface DataTableProps<TRow> {
   /** Preset compacto: filas más bajas, tipografía menor, padding más ajustado. */
   dense?: boolean
   /**
+   * Factor de ampliación de la tabla, como el zoom de una hoja de cálculo. Por
+   * defecto `1`.
+   *
+   * Es un FACTOR y no un porcentaje: el 125% se pide como `1.25`. Se acota a la
+   * banda `[0.5, 2]` —la misma escalera del 50% al 200% que ofrece cualquier
+   * hoja de cálculo—, y un valor que no sea un número finito y positivo se
+   * descarta y vuelve a `1`. Cuando el valor recibido hace falta corregirlo, se
+   * anuncia por `update:zoom`, de modo que `v-model:zoom` converge en un ciclo.
+   *
+   * ## Qué escala, y qué NO
+   *
+   * Escala las MÉTRICAS del layout al resolverlas: el alto de fila, el alto del
+   * encabezado, el ancho de cada columna, el ancho de la regleta de numeración
+   * y la tipografía. No hay ninguna transformación visual de por medio, y esa es
+   * la decisión importante: un `transform: scale()` sobre la raíz habría sido
+   * una línea de CSS y habría roto todo lo que esta tabla resuelve comparando
+   * coordenadas de puntero contra offsets calculados en JS —la selección de un
+   * rango, el redimensionado de una columna, el arrastre para reordenar—. Con
+   * las métricas escaladas, todo lo de abajo sigue trabajando en píxeles reales,
+   * porque son píxeles reales.
+   *
+   * ## Lo que se guarda queda en píxeles base
+   *
+   * `columnWidths`, `rowHeight`, `headerHeight` y el layout persistido **nunca**
+   * llevan el factor adentro. Un arrastre de redimensionado al 200% convierte el
+   * delta del puntero de vuelta a espacio base antes de guardarlo, así que un
+   * layout ajustado al 200% se ve igual al volver al 100%.
+   *
+   * **No se persiste.** Es un `v-model` como `sort` o `selectedRows`: el estado
+   * lo posee el consumidor, que es quien sabe si el zoom es una preferencia de
+   * la persona, de la pantalla o de la sesión.
+   */
+  zoom?: number
+  /**
+   * Si la tabla ocupa la pantalla completa. Por defecto `false`.
+   *
+   * Es un `v-model:fullscreen` y funciona con la **Fullscreen API nativa**: la
+   * raíz se promueve a la top layer del navegador con `requestFullscreen()`. No
+   * es un `position: fixed`, y la diferencia se nota en cuanto la tabla vive
+   * adentro de algo: un ancestro con `transform`, `filter`, `perspective` o
+   * `container-type` crea un bloque contenedor nuevo, y ahí un `fixed` deja de
+   * ser relativo al viewport y la tabla "a pantalla completa" queda encerrada en
+   * el panel de su padre.
+   *
+   * ## Tres cosas que el navegador decide y este componente no
+   *
+   * 1. **ESC y F11 salen sin preguntar.** En pantalla completa esas teclas son
+   *    del navegador y no se pueden retener con `preventDefault`. Cuando eso
+   *    pasa, la tabla lo detecta por `fullscreenchange` y lo anuncia con
+   *    `update:fullscreen`, de modo que el modelo del padre vuelva a coincidir
+   *    con la realidad. Un padre que ignore el aviso se queda con un toggle que
+   *    deja de responder.
+   * 2. **El pedido puede rechazar.** `requestFullscreen()` devuelve una promesa,
+   *    y rechaza si la llamada no viene de un gesto del usuario o si una
+   *    permissions policy la bloquea —un `<iframe>` sin `allowfullscreen`, por
+   *    ejemplo—. Ante un rechazo se emite `update:fullscreen` con `false`.
+   * 3. **Entrar exige activación del usuario.** Poner esta prop en `true` al
+   *    montar, o desde un `setTimeout`, es un pedido sin gesto detrás: el
+   *    navegador lo rechaza y la tabla vuelve el modelo a `false` por el camino
+   *    del punto anterior. Para el caso normal —un botón— sirven tanto la prop
+   *    como {@link DataTableInstance.enterFullscreen}.
+   */
+  fullscreen?: boolean
+  /**
    * La cruz de la celda activa: una línea bajo el encabezado de su columna y
    * otra al costado de su número de fila. Por defecto `false`.
    *
@@ -1830,4 +1894,34 @@ export interface DataTableInstance {
   expandAllGroups(): void
   /** Colapsa todos los grupos. */
   collapseAllGroups(): void
+  /**
+   * Pide la pantalla completa para la raíz de la tabla.
+   *
+   * ## Por qué existe, habiendo una prop
+   *
+   * Porque entrar en pantalla completa exige **activación del usuario**: el
+   * navegador solo concede el pedido que sale del mismo turno de la pila que el
+   * gesto que lo provocó. Llamado desde el `@click` de un botón, este método
+   * corre exactamente ahí. La prop también llega a tiempo —su watcher es
+   * `flush: 'sync'`—, pero obliga a que el estado exista antes de poder pedir, y
+   * hay consumidores que solo quieren un botón.
+   *
+   * Es además el camino que funciona sin poseer el estado: la tabla se entera de
+   * lo que pasó por `fullscreenchange`, no por la prop, así que un consumidor
+   * que ignore `update:fullscreen` puede entrar y salir con estos dos métodos.
+   *
+   * No hace nada si la raíz ya está en pantalla completa. Si el navegador
+   * rechaza el pedido —sin gesto, o bloqueado por una permissions policy— se
+   * emite `update:fullscreen` con `false` y no se lanza ningún error.
+   */
+  enterFullscreen(): void
+  /**
+   * Sale de la pantalla completa, si la raíz de ESTA tabla es la que está.
+   *
+   * No hace nada en cualquier otro caso, y esa condición no es una formalidad:
+   * `document.exitFullscreen()` saca de pantalla completa al elemento que esté,
+   * sea de quien sea, así que llamarla sin comprobar cerraría la pantalla
+   * completa de otro componente de la página.
+   */
+  exitFullscreen(): void
 }

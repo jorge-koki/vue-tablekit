@@ -60,6 +60,7 @@ import {
   DEFAULT_OVERSCAN,
   DEFAULT_PERSIST_VERSION,
   DEFAULT_ROW_HEIGHT,
+  DEFAULT_ZOOM,
   DENSE_HEADER_HEIGHT,
   DENSE_ROW_HEIGHT,
   DENSE_ROW_NUMBER_DIGIT_WIDTH,
@@ -74,7 +75,7 @@ import {
 import { SELECTION_HOOKS } from './internal/renderers'
 import { EMPTY_GROUP_LABEL } from './internal/aggregations'
 import { buildRangeText } from './internal/clipboard'
-import { clamp, readCellValue } from './internal/values'
+import { clamp, normalizeZoom, readCellValue } from './internal/values'
 import './styles/datatable.css'
 
 /**
@@ -114,6 +115,8 @@ const props = withDefaults(defineProps<DataTableProps<TRow>>(), {
   // defecto depende de `dense`, y `withDefaults` no admite defaults derivados de
   // otra prop. Se resuelven más abajo en un `computed`.
   dense: false,
+  zoom: DEFAULT_ZOOM,
+  fullscreen: false,
   overscan: DEFAULT_OVERSCAN,
   defaultColumnWidth: DEFAULT_COLUMN_WIDTH,
   virtualizeColumns: true,
@@ -180,24 +183,44 @@ const emit = defineEmits<{
   sortChange: [SortChangeEvent]
   'update:groupBy': [string[]]
   'update:expandedGroups': [string[]]
+  'update:zoom': [number]
+  'update:fullscreen': [boolean]
 }>()
 
 /**
- * El único slot del componente, y la única vía por la que entra un componente
+ * Los dos slots del componente, y la única vía por la que entra un componente
  * Vue ajeno.
  *
- * Se renderiza SOLO sobre la celda que está en edición, dentro del host del
- * editor y nunca dentro de `.dt-canvas`, que es territorio del pool. Una celda
- * abierta a la vez significa una instancia montada a la vez, sin importar
- * cuántas filas tenga la tabla: es la misma disciplina del `<input>` reutilizado
- * que ya usaban los editores incluidos.
+ * `#editor` se renderiza SOLO sobre la celda que está en edición, dentro del
+ * host del editor y nunca dentro de `.dt-canvas`, que es territorio del pool.
+ * Una celda abierta a la vez significa una instancia montada a la vez, sin
+ * importar cuántas filas tenga la tabla: es la misma disciplina del `<input>`
+ * reutilizado que ya usaban los editores incluidos.
  *
- * Es opcional, y cuando no se declara el componente ni siquiera renderiza la
- * caja que lo contendría: una tabla que no lo usa produce exactamente el mismo
- * DOM que antes de que este slot existiera.
+ * `#toolbar` es una barra de encabezado por encima del viewport. La librería
+ * pone la BARRA y el consumidor pone lo que va adentro; ningún control lo aporta
+ * el componente, y eso es deliberado: la única razón por la que existe
+ * `v-model:zoom` es que la UI del zoom sea del consumidor, y meterle un botón de
+ * zoom acá adentro sería desdecirse en la misma versión.
+ *
+ * ## Por qué la barra no depende de `fullscreen`
+ *
+ * Es la pregunta que se hace sola, porque el caso que la motivó es la pantalla
+ * completa: ahí la tabla ocupa todo y los controles del consumidor se quedaron
+ * del otro lado. Se renderiza igual en los dos estados, y la razón es de a quién
+ * le queda la decisión. Esconderla fuera de pantalla completa es un `v-if`
+ * dentro del slot —el consumidor posee `v-model:fullscreen`, así que sabe
+ * cuándo—; hacerla aparecer cuando la librería la esconde no es nada que el
+ * consumidor pueda escribir. De las dos, la restricción que se puede agregar
+ * desde afuera es la que no conviene incorporar adentro.
+ *
+ * Los dos son opcionales, y cuando no se declaran el componente ni siquiera
+ * renderiza la caja que los contendría: una tabla que no los usa produce
+ * exactamente el mismo DOM que antes de que estos slots existieran.
  */
 defineSlots<{
   editor?: (props: CellEditorSlotProps<TRow>) => unknown
+  toolbar?: () => unknown
 }>()
 
 /* --------------------------------------------- Estado de layout de columnas */
@@ -407,7 +430,67 @@ const slotEditorHostEl = shallowRef<HTMLElement | null>(null)
 /* -------------------------------------------------------------- Métricas base */
 
 /**
- * Altura de fila BASE, en px.
+ * El factor de zoom vigente, ya acotado a la banda soportada.
+ *
+ * ## Por qué escalar métricas y no transformar píxeles
+ *
+ * Un `transform: scale()` sobre `.dt-root` habría sido una línea de CSS. Y
+ * habría roto las tres funciones que esta tabla resuelve comparando coordenadas
+ * de puntero contra offsets calculados en JS: la selección de un rango, el
+ * redimensionado de una columna y el arrastre para reordenar. Las tres leen
+ * `clientX` / `clientY`, que el navegador entrega en píxeles de pantalla SIN la
+ * transformación aplicada, y los restan contra offsets que este componente
+ * calculó sin saber que existía. Al 200%, agarrar una celda seleccionaría otra.
+ * La virtualización tiene el mismo problema en vertical: `scrollTop` se divide
+ * por el alto de fila para saber qué fila pintar.
+ *
+ * Así que el factor entra donde se RESUELVEN las métricas —acá, y en el ancho de
+ * columna dentro de `useColumnLayout`— y de ahí para abajo todo sigue trabajando
+ * en píxeles reales, porque son píxeles reales. Ni el pool, ni el editor, ni el
+ * recuadro del rango, ni una sola cuenta de hit-testing se entera de que el zoom
+ * existe.
+ *
+ * ## Lo que NO escala
+ *
+ * Nada de lo que se guarda: `props.rowHeight`, `props.headerHeight`,
+ * `column.width`, el estado de anchos y el layout persistido viven en píxeles
+ * base para siempre. Ver {@link ResolvedColumn.baseWidth}.
+ */
+const zoom = computed(() => normalizeZoom(props.zoom))
+
+/**
+ * Se avisa cuando el factor recibido hubo que corregirlo.
+ *
+ * Es la única vía por la que el componente escribe `zoom`, y existe para que
+ * `v-model:zoom` no quede mintiendo: con un `5` en el modelo del padre, la tabla
+ * pinta al 200% y el padre cree estar al 500%. El aviso converge en un ciclo
+ * —acotar es idempotente— y un padre que lo ignore simplemente ve la tabla
+ * acotada, que es la semántica normal de un v-model.
+ */
+watch(
+  () => props.zoom,
+  (declared) => {
+    const efectivo = normalizeZoom(declared)
+    if (declared !== efectivo) emit('update:zoom', efectivo)
+  },
+  { immediate: true },
+)
+
+/**
+ * Altura de fila BASE, en px: la que declara el consumidor, sin zoom.
+ *
+ * Es la unidad en la que está escrita la prop y en la que se compara contra las
+ * constantes del preset `dense`. Todo lo que mida pantalla usa
+ * {@link rowHeight}, que es esta multiplicada por el factor.
+ */
+const baseRowHeight = computed(() => {
+  const declared = props.rowHeight
+  if (typeof declared === 'number' && Number.isFinite(declared) && declared > 0) return declared
+  return props.dense ? DENSE_ROW_HEIGHT : DEFAULT_ROW_HEIGHT
+})
+
+/**
+ * Altura de fila PINTADA, en px.
  *
  * Es un número y no un valor CSS porque el virtualizador hace cuentas con él. Se
  * replica a `--dt-row-height` para que la presentación coincida.
@@ -418,17 +501,15 @@ const slotEditorHostEl = shallowRef<HTMLElement | null>(null)
  * el que viaja a la hoja de estilos. El alto de cada fila sale de
  * {@link rowVirtual}`.metrics`.
  */
-const rowHeight = computed(() => {
-  const declared = props.rowHeight
-  if (typeof declared === 'number' && Number.isFinite(declared) && declared > 0) return declared
-  return props.dense ? DENSE_ROW_HEIGHT : DEFAULT_ROW_HEIGHT
-})
+const rowHeight = computed(() => baseRowHeight.value * zoom.value)
 
-const headerHeight = computed(() => {
+const baseHeaderHeight = computed(() => {
   const declared = props.headerHeight
   if (declared !== undefined && Number.isFinite(declared) && declared > 0) return declared
   return props.dense ? DENSE_HEADER_HEIGHT : DEFAULT_HEADER_HEIGHT
 })
+
+const headerHeight = computed(() => baseHeaderHeight.value * zoom.value)
 
 /* ---------------------------------------------------------- Modo servidor */
 
@@ -580,13 +661,22 @@ const rowNumberWidth = computed(() => {
 
   // Con filas muy bajas o muy altas el cuadrado dejaría de tener sentido: un
   // borde grueso en un caso, una franja enorme en el otro.
-  const square = clamp(rowHeight.value, ROW_NUMBER_MIN_WIDTH, ROW_NUMBER_MAX_WIDTH)
+  const square = clamp(baseRowHeight.value, ROW_NUMBER_MIN_WIDTH, ROW_NUMBER_MAX_WIDTH)
 
   const digits = String(Math.max(1, visibleRowCount.value)).length
   const perDigit = props.dense ? DENSE_ROW_NUMBER_DIGIT_WIDTH : ROW_NUMBER_DIGIT_WIDTH
   const padding = props.dense ? DENSE_ROW_NUMBER_PADDING : ROW_NUMBER_PADDING
 
-  return Math.max(square, digits * perDigit + padding)
+  /*
+   * La cuenta entera ocurre en espacio BASE y el factor se aplica al final.
+   *
+   * No es lo mismo que escalar el alto de fila antes de entrar: las tres cotas
+   * de este cálculo —la banda del cuadrado y el ancho por dígito— están
+   * calibradas contra la tipografía base, y con el alto ya escalado el techo de
+   * la banda recortaría igual al 50% que al 200%, dejando la regleta del mismo
+   * ancho mientras los números adentro crecen hasta no entrar.
+   */
+  return Math.max(square, digits * perDigit + padding) * zoom.value
 })
 
 /**
@@ -701,6 +791,9 @@ const layout = useColumnLayout<TRow>({
   order: effectiveColumnOrder,
   widths: columnWidths,
   pinning: columnPinning,
+  // El factor va al LAYOUT y no al estado: `columnWidths` sigue en píxeles base
+  // y el ancho pintado se resuelve aguas abajo. Ver `ResolvedColumn.baseWidth`.
+  zoom: () => zoom.value,
   leadingOffset: () => rowNumberWidth.value,
   // El arrastre pide el ancho, el componente lo guarda. El layout no almacena
   // nada: así el ancho puede venir de un v-model o de un layout restaurado sin
@@ -896,7 +989,14 @@ const rowHeightAt = computed<((index: number) => number) | null>(() => {
   void props.rows
   void grouping.flatRows.value
 
-  return (index) => declared(grouping.rowAt(index), index)
+  const factor = zoom.value
+  // El resolutor del consumidor habla en píxeles base, igual que la prop
+  // numérica, y la geometría vertical se consume en píxeles pintados. La
+  // conversión va acá, en el envoltorio, para que `useRowMetrics` siga sin
+  // saber que el zoom existe. Un valor que no sirva se multiplica igual y sigue
+  // sin servir, así que el respaldo de allá adentro —el alto base, ya
+  // escalado— se aplica solo.
+  return (index) => declared(grouping.rowAt(index), index) * factor
 })
 
 const rowVirtual = useRowMetrics({
@@ -2634,7 +2734,18 @@ function onResizePointerDown(event: PointerEvent, column: ResolvedColumn<TRow>):
   handle.setPointerCapture(event.pointerId)
 
   const startX = event.clientX
-  const startWidth = column.width
+  /*
+   * Se arranca del ancho BASE, no del pintado, y el delta se convierte.
+   *
+   * El puntero solo sabe hablar en píxeles de pantalla, y el ancho se guarda en
+   * píxeles base: al 200%, mover el puntero 100px tiene que mover el ancho
+   * guardado 50, o el borde de la columna se iría al doble de velocidad que el
+   * cursor. La división ocurre acá, antes de `setColumnWidth`, para que el
+   * acotado por `minWidth` / `maxWidth` de allá adentro ocurra en el mismo
+   * espacio en el que esos límites están declarados.
+   */
+  const startWidth = column.baseWidth
+  const factor = zoom.value
   // Se recuerda el último ancho aplicado en lugar de releerlo del layout al
   // soltar: en modo controlado el padre puede no haber actualizado la prop
   // todavía, y la relectura devolvería el ancho viejo.
@@ -2647,7 +2758,10 @@ function onResizePointerDown(event: PointerEvent, column: ResolvedColumn<TRow>):
   // Declarándolos después del estrechamiento, el tipo `HTMLElement` sobrevive y
   // `addEventListener` resuelve su sobrecarga tipada.
   const onPointerMove = (moveEvent: PointerEvent): void => {
-    appliedWidth = layout.setColumnWidth(column.key, startWidth + (moveEvent.clientX - startX))
+    appliedWidth = layout.setColumnWidth(
+      column.key,
+      startWidth + (moveEvent.clientX - startX) / factor,
+    )
   }
 
   const onPointerUp = (upEvent: PointerEvent): void => {
@@ -3386,6 +3500,147 @@ function selectRangeFromApi(range: CellRange | null): void {
   if (range) scrollToCell(range.focus)
 }
 
+/* ---------------------------------------------------------- Pantalla completa */
+
+/**
+ * Se usa la Fullscreen API NATIVA, y no un `position: fixed` sobre la raíz.
+ *
+ * El `fixed` es la implementación obvia y la que rompe adentro de una
+ * aplicación: cualquier ancestro con `transform`, `filter`, `perspective`,
+ * `backdrop-filter`, `contain` o `container-type` crea un bloque contenedor, y a
+ * partir de ahí `fixed` deja de ser relativo al viewport. La tabla "a pantalla
+ * completa" queda encerrada en la caja del panel que la contiene, y el síntoma
+ * aparece en la aplicación del consumidor y no acá. El elemento en pantalla
+ * completa, en cambio, se promueve a la TOP LAYER, que no cuelga de ningún
+ * ancestro y por lo tanto no hay CSS del anfitrión que pueda atraparlo.
+ *
+ * Eso se pudo elegir porque este componente **no usa `Teleport` ni ningún
+ * portal**: el menú de la columna, el recuadro del rango, el fantasma del
+ * arrastre y el host del editor se renderizan adentro del árbol de `.dt-root`,
+ * así que viajan con ella. Un solo nodo teletransportado a `body` habría quedado
+ * abajo, tapado por la tabla y sin forma de subirlo.
+ *
+ * ## Se promueve la RAÍZ y no el viewport
+ *
+ * Por lo mismo: los cuatro nodos de arriba son hermanos del viewport, no hijos
+ * suyos. Promover el viewport habría dejado el menú de la columna invisible
+ * justo en el modo donde más columnas hay a la vista.
+ */
+
+/** `true` si el documento tiene a ESTA raíz —y no a otro elemento— en pantalla. */
+function rootIsFullscreen(): boolean {
+  const root = rootEl.value
+  return root !== null && document.fullscreenElement === root
+}
+
+/**
+ * Única vía por la que el componente escribe `fullscreen`.
+ *
+ * Se emite solo cuando lo declarado y lo real discrepan, que es exactamente
+ * cuando el modelo del padre está mintiendo. Sin esto, las tres salidas que el
+ * componente no controla —ESC, F11 y un pedido rechazado— dejan la prop en
+ * `true` sobre un documento que no está en pantalla completa, y el siguiente
+ * toggle no encuentra nada de qué salir: el botón deja de responder y nada en la
+ * interfaz sugiere por qué.
+ */
+function syncFullscreen(active: boolean): void {
+  if (props.fullscreen !== active) emit('update:fullscreen', active)
+}
+
+/**
+ * Pide la pantalla completa para la raíz.
+ *
+ * El pedido devuelve una promesa que **puede rechazar**: sin activación del
+ * usuario detrás, o con una permissions policy que lo bloquee —un `<iframe>` sin
+ * `allowfullscreen`—. Un rechazo tragado dejaría la prop afirmando algo que no
+ * ocurrió, así que el `catch` devuelve el modelo a `false`.
+ *
+ * Que el método pueda no existir no es defensa de más: hay navegadores sin la
+ * API y contextos donde el atributo no está. Ahí la respuesta correcta es la
+ * misma que ante un rechazo —avisar que no se entró— y no una excepción.
+ */
+function enterFullscreen(): void {
+  const root = rootEl.value
+  if (!root || rootIsFullscreen()) return
+
+  const request: unknown = Reflect.get(root, 'requestFullscreen')
+  if (typeof request !== 'function') {
+    syncFullscreen(false)
+    return
+  }
+
+  // `Promise.resolve(...)` porque la firma vieja de la API —y la de algún
+  // navegador todavía en uso— no devuelve nada: encadenar `.catch` directo
+  // sobre `undefined` lanzaría por una razón que no tiene que ver con el pedido.
+  const pending: unknown = Reflect.apply(request, root, [])
+  void Promise.resolve(pending).catch(() => {
+    syncFullscreen(rootIsFullscreen())
+  })
+}
+
+/**
+ * Sale de la pantalla completa, y solo si la que está es la raíz propia.
+ *
+ * La comprobación no es una formalidad: `document.exitFullscreen()` saca al
+ * elemento que ESTÉ en pantalla completa, sea de quien sea. Sin ella, una tabla
+ * cuya prop cambia a `false` cerraría la pantalla completa que abrió otro
+ * componente de la página.
+ */
+function exitFullscreen(): void {
+  if (!rootIsFullscreen()) return
+
+  const exit: unknown = Reflect.get(document, 'exitFullscreen')
+  if (typeof exit !== 'function') {
+    syncFullscreen(false)
+    return
+  }
+
+  const pending: unknown = Reflect.apply(exit, document, [])
+  void Promise.resolve(pending).catch(() => {
+    syncFullscreen(rootIsFullscreen())
+  })
+}
+
+/**
+ * El documento cambió de elemento en pantalla completa, por el motivo que sea.
+ *
+ * Es el ÚNICO lugar desde el que se sabe la verdad, y por eso el estado no se
+ * guarda en ningún lado: se lee de `document.fullscreenElement`, que es de quien
+ * es. ESC y F11 son teclas del navegador —en pantalla completa ni siquiera
+ * llegan a la página de forma cancelable—, así que la salida por teclado entra
+ * exclusivamente por acá.
+ *
+ * El listener va en `document` y no en la raíz porque el evento de SALIDA se
+ * emite sobre el elemento que estaba, que puede ser cualquiera de la página. La
+ * comparación de {@link rootIsFullscreen} es lo que filtra lo ajeno.
+ */
+function onFullscreenChange(): void {
+  syncFullscreen(rootIsFullscreen())
+}
+
+/**
+ * El watcher corre SINCRÓNICAMENTE, dentro de la escritura de la prop.
+ *
+ * Con el `flush` por defecto —`'pre'`— el efecto se agenda y corre en un
+ * microtask, del otro lado del turno en el que ocurrió el clic. La activación
+ * del usuario normalmente sobrevive un microtask, pero es un margen que no hay
+ * ninguna razón para gastar: `requestFullscreen()` se rechaza sin él y el
+ * síntoma sería un botón que funciona en una máquina y no en otra.
+ *
+ * No es `immediate`: en el momento del setup la raíz todavía no existe. El caso
+ * de montar con la prop ya encendida lo atiende `onMounted`, y termina en un
+ * rechazo —no hay gesto del usuario detrás de un montaje— que vuelve el modelo a
+ * `false` por el camino de arriba.
+ */
+watch(
+  () => props.fullscreen,
+  (wanted) => {
+    if (wanted) enterFullscreen()
+    else exitFullscreen()
+  },
+  { flush: 'sync' },
+)
+
 defineExpose({
   scrollToRow,
   scrollToColumn,
@@ -3399,6 +3654,8 @@ defineExpose({
   toggleGroup: grouping.toggleGroup,
   expandAllGroups: grouping.expandAll,
   collapseAllGroups: grouping.collapseAll,
+  enterFullscreen,
+  exitFullscreen,
 })
 
 /* ------------------------------------------------------------- Ciclo de vida */
@@ -3408,6 +3665,12 @@ onMounted(() => {
   if (canvas) pool.mount(canvas, gutterEl.value)
   scroll.requestFrame()
   document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  // Montar con la prop ya encendida es un pedido SIN gesto del usuario detrás, y
+  // el navegador lo rechaza. Se intenta igual —hay contextos donde se concede,
+  // como una recarga dentro de una sesión de pantalla completa ya vigente— y el
+  // rechazo devuelve el modelo a `false` sin romper nada.
+  if (props.fullscreen) enterFullscreen()
 })
 
 /**
@@ -3448,6 +3711,10 @@ watch(
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
+  // No se sale de la pantalla completa acá: el navegador ya sale solo cuando el
+  // elemento promovido deja el documento, y pedirlo a mano sacaría además al
+  // elemento de otro componente si para entonces el que está es otro.
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
   // `useScrollSync` y `useCellEditor` limpian lo suyo con sus propios hooks; el
   // pool no es un composable de Vue, así que se desmonta explícitamente.
   pool.unmount()
@@ -3464,6 +3731,17 @@ const rootStyle = computed(() => ({
   // Igual que las alturas: el número lo decide JS —porque de él dependen los
   // offsets de todas las columnas— y el CSS lo espeja, nunca al revés.
   '--dt-row-number-width': `${rowNumberWidth.value}px`,
+  /*
+   * El FACTOR, no el tamaño de letra resultante.
+   *
+   * La tipografía es lo único que el zoom no puede resolver en JS: `--dt-font-size`
+   * es un token documentado que el consumidor puede pisar, y escribirlo inline
+   * le ganaría a su hoja de estilos y le rompería la personalización. Se le pasa
+   * el factor y la hoja multiplica —`font-size: calc(var(--dt-font-size) * var(--dt-zoom))`
+   * sobre `.dt-root`—, así que el token sigue siendo suyo y la cascada hace el
+   * resto: los descendientes ya miden en `em`.
+   */
+  '--dt-zoom': String(zoom.value),
 }))
 
 const canvasStyle = computed(() => ({
@@ -3580,6 +3858,22 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
     :data-select-rows="rowSelection ? 'true' : 'false'"
     :data-reorder="columnReorder ? 'true' : 'false'"
   >
+    <!--
+      Barra de encabezado. La pone la librería, la llena el consumidor.
+
+      Se renderiza solo si el slot está declarado, igual que la caja del editor
+      por slot: una tabla que no lo usa produce el mismo DOM que antes de que
+      esto existiera. Y se renderiza en los dos estados, dentro y fuera de
+      pantalla completa; el porqué está en `defineSlots`.
+
+      Adentro no va NINGÚN control de la librería. Esta barra nació para la
+      pantalla completa —donde los controles del consumidor se quedan del otro
+      lado— y la tentación era resolverla con un botón de zoom incorporado, que
+      es justo lo que `v-model:zoom` existe para no tener que hacer.
+    -->
+    <div v-if="$slots.toolbar" class="dt-toolbar">
+      <slot name="toolbar" />
+    </div>
     <!--
       El viewport scrollea y recibe el teclado, pero ya no es la grilla: es un
       contenedor sin rol propio entre la grilla y su cuerpo. El foco se queda
@@ -3810,6 +4104,26 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
         es territorio del pool. `pointer-events: none` lo deja fuera del camino
         del arrastre, que tiene que seguir viendo las celdas de abajo.
       -->
+      <!--
+        Esperando NO es "sin datos". Mientras `loading` esté encendido el mensaje
+        se calla: decir "no hay resultados" sobre una consulta que todavía no
+        respondió es afirmar algo que nadie sabe.
+
+        Sin texto no hay elemento, y no solo un elemento sin texto. `.dt-empty`
+        reserva 2rem de aire a cada lado, y con la cadena vacía eso dejaba una
+        franja de 4rem en el medio de la tabla. `emptyText=""` es la forma de
+        decir "no muestres nada", y eso tiene que incluir lo que dibuja la caja.
+
+        Vive DENTRO del viewport y no en la raíz, y no es indiferente: se
+        posiciona con `inset: var(--dt-header-height) 0 0 0`, que es un offset
+        desde el tope de su contenedor y que existe para no tapar los títulos de
+        las columnas. Colgado de la raíz, la barra de `#toolbar` se suma antes de
+        ese offset y el mensaje termina montado sobre el encabezado. Acá adentro
+        el offset mide contra lo único contra lo que tiene sentido medirlo, que
+        es el encabezado mismo. Sin filas no hay nada que scrollear, así que
+        estar dentro del contenedor que scrollea no lo mueve de lugar.
+      -->
+      <div v-if="showEmptyMessage" class="dt-empty">{{ emptyText }}</div>
       <div v-if="rangeBox" class="dt-range-box" :style="rangeBox" aria-hidden="true" />
       <!--
         Confirmación del copiado: las mismas líneas, cambiando de color y
@@ -3856,20 +4170,6 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
         <slot v-if="editorSlotProps" name="editor" v-bind="editorSlotProps" />
       </div>
     </div>
-
-    <!--
-      Esperando NO es "sin datos". Mientras `loading` esté encendido el mensaje se
-      calla: decir "no hay resultados" sobre una consulta que todavía no respondió
-      es afirmar algo que nadie sabe.
-    -->
-    <!--
-      Sin texto no hay elemento, y no solo un elemento sin texto.
-      `.dt-empty` dibuja una línea arriba y reserva 2rem de aire a cada lado: con
-      la cadena vacía eso dejaba una franja de 4rem cruzada por un separador que
-      no separa nada de nada. `emptyText=""` es la forma de decir "no muestres
-      nada", y eso tiene que incluir lo que dibuja la caja.
-    -->
-    <div v-if="showEmptyMessage" class="dt-empty">{{ emptyText }}</div>
 
     <!--
       Línea de caída: dónde va a quedar la columna que se está arrastrando.

@@ -591,6 +591,58 @@ body {
   margin: 0;
 }
 
+/* ------------------------------------------------------------------- Zoom */
+
+/*
+ * Los dos botones y el porcentaje, como una sola pieza.
+ *
+ * El valor va EN EL MEDIO y no al costado porque es lo que convierte a los dos
+ * botones en un control: separado, los botones serían dos acciones sueltas y el
+ * número un dato más del riel.
+ */
+.demo-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.demo-stepper-button {
+  /* Cuadrado: el signo es un glifo solo, y el padding del botón normal lo
+     dejaría en un rectángulo ancho al lado de un número corto. */
+  width: 1.75rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/*
+ * Ancho fijo para que los botones no se muevan al pasar de 50% a 100%.
+ *
+ * Es `ch` y no `rem`: la unidad mide caracteres de la propia tipografía, así que
+ * el hueco sigue siendo el de cuatro glifos aunque la fuente cambie.
+ */
+.demo-stepper-value {
+  min-width: 4ch;
+  color: var(--dt-text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/*
+ * Los controles de la barra `#toolbar`, fuera del zoom que ellos mismos mandan.
+ *
+ * La barra vive adentro de `.dt-root`, cuyo `font-size` lleva el factor de zoom
+ * puesto para que toda la tabla lo acompañe, y `.demo-button` declara
+ * `font: inherit`. Sin fijar el tamaño acá, el control que sirve para cambiar el
+ * zoom se agrandaría con él y la salida de pantalla completa también: al 200%
+ * ocuparían el doble justo cuando menos lugar sobra, y en pantalla completa son
+ * los únicos controles que hay.
+ */
+.dt-toolbar .demo-stepper,
+.dt-toolbar .demo-exit-fullscreen {
+  font-size: 0.875rem;
+}
+
 .demo-actions {
   display: flex;
   flex-wrap: wrap;

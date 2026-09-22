@@ -192,3 +192,149 @@ export function installFakeResizeObserver(): () => void {
     FakeResizeObserver.reset()
   }
 }
+
+/* --------------------------------------------------------- Pantalla completa */
+
+/**
+ * Mando del doble de la Fullscreen API.
+ *
+ * `happy-dom` no la implementa: `requestFullscreen` no existe sobre los
+ * elementos, `exitFullscreen` no existe sobre el documento y
+ * `document.fullscreenElement` es siempre `null`. Sin un doble no se puede
+ * afirmar nada sobre esta función, porque el componente no la resuelve por su
+ * cuenta: se la pide al navegador y se entera de lo que pasó por un evento.
+ *
+ * Y ese reparto es exactamente lo que hay que poder simular. Las tres cosas que
+ * el doble expone no son comodidades del test, son los tres caminos por los que
+ * el estado real se separa del que cree el consumidor:
+ * {@link FakeFullscreen.failNextRequest} es el pedido que el navegador rechaza,
+ * {@link FakeFullscreen.exitFromBrowser} es el ESC o el F11 que sale sin
+ * preguntar, y {@link FakeFullscreen.exits} es la prueba de que el componente NO
+ * pidió salir cuando ya estaba afuera.
+ */
+export interface FakeFullscreen {
+  /** Cuántas veces se llamó a `element.requestFullscreen()`. */
+  readonly requests: number
+  /** Cuántas veces se llamó a `document.exitFullscreen()`. */
+  readonly exits: number
+  /**
+   * Hace que el PRÓXIMO `requestFullscreen()` devuelva una promesa rechazada,
+   * sin cambiar `document.fullscreenElement`.
+   *
+   * Es el caso real: el navegador rechaza el pedido que no viene de un gesto del
+   * usuario, o que una permissions policy bloquea.
+   */
+  failNextRequest(reason?: unknown): void
+  /**
+   * Sale de pantalla completa como sale el NAVEGADOR: por ESC o por F11.
+   *
+   * No pasa por `exitFullscreen()` —y por eso no suma a {@link exits}—: cambia
+   * `document.fullscreenElement` y emite `fullscreenchange`, que es todo lo que
+   * el documento le cuenta a la página.
+   */
+  exitFromBrowser(): void
+  /** Devuelve los globales a como estaban. Se llama entre tests. */
+  restore(): void
+}
+
+/**
+ * Instala el doble sobre `Element.prototype` y sobre `document`.
+ *
+ * Se instala por archivo de test y no desde el setup global, al revés que los
+ * otros dos dobles: estos definen propiedades que hoy no existen, así que
+ * dejarlas puestas para toda la suite le enseñaría a cualquier otro test que la
+ * Fullscreen API está disponible cuando el resto del entorno dice que no.
+ */
+export function installFakeFullscreen(): FakeFullscreen {
+  const elementDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'requestFullscreen')
+  const exitDescriptor = Object.getOwnPropertyDescriptor(document, 'exitFullscreen')
+  const currentDescriptor = Object.getOwnPropertyDescriptor(document, 'fullscreenElement')
+
+  let current: Element | null = null
+  let pendingFailure: { reason: unknown } | null = null
+
+  /**
+   * Mueve el elemento en pantalla completa y avisa, en ese orden.
+   *
+   * El orden importa y es el del navegador: para cuando `fullscreenchange`
+   * llega, `document.fullscreenElement` ya vale lo nuevo. Un manejador que lo
+   * lea —y el del componente lo lee, porque es la única verdad— tiene que
+   * encontrar el valor de después.
+   *
+   * El evento nace en el elemento y burbujea, que es lo que hace que un listener
+   * puesto en `document` se entere de todos.
+   */
+  function setCurrent(next: Element | null): void {
+    const previous = current
+    current = next
+    const target = next ?? previous
+    const host: EventTarget = target !== null && target.isConnected ? target : document
+    host.dispatchEvent(new Event('fullscreenchange', { bubbles: true }))
+  }
+
+  Object.defineProperty(Element.prototype, 'requestFullscreen', {
+    configurable: true,
+    writable: true,
+    value: function requestFullscreen(this: Element): Promise<void> {
+      control.requests += 1
+      const failure = pendingFailure
+      pendingFailure = null
+      if (failure !== null) return Promise.reject(failure.reason)
+      setCurrent(this)
+      return Promise.resolve()
+    },
+  })
+
+  Object.defineProperty(document, 'exitFullscreen', {
+    configurable: true,
+    writable: true,
+    value: (): Promise<void> => {
+      control.exits += 1
+      setCurrent(null)
+      return Promise.resolve()
+    },
+  })
+
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true,
+    get: () => current,
+  })
+
+  const control = {
+    requests: 0,
+    exits: 0,
+
+    failNextRequest(reason: unknown = new Error('[fake] requestFullscreen rechazado')): void {
+      pendingFailure = { reason }
+    },
+
+    exitFromBrowser(): void {
+      if (current === null) return
+      setCurrent(null)
+    },
+
+    restore(): void {
+      restoreOwn(Element.prototype, 'requestFullscreen', elementDescriptor)
+      restoreOwn(document, 'exitFullscreen', exitDescriptor)
+      restoreOwn(document, 'fullscreenElement', currentDescriptor)
+      current = null
+      pendingFailure = null
+    },
+  }
+
+  return control
+}
+
+/**
+ * Devuelve una propiedad propia a su descriptor anterior, o la borra si no
+ * existía.
+ *
+ * Borrarla y no dejarla en `undefined` es lo que hace que el entorno vuelva a
+ * ser el de antes: una propiedad propia con valor `undefined` sigue tapando a la
+ * del prototipo, y `typeof element.requestFullscreen === 'function'` daría
+ * `false` por una razón distinta de la real.
+ */
+function restoreOwn(target: object, key: string, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor) Object.defineProperty(target, key, descriptor)
+  else Reflect.deleteProperty(target, key)
+}

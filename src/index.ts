@@ -46,6 +46,7 @@ export type {
   DataRow,
   DataTableColumn,
   DataTableInstance,
+  DataTableLabels,
   DataTablePersistOptions,
   DataTableProps,
   DataTableRadius,
@@ -69,6 +70,7 @@ export type {
   SortChangeEvent,
   SortDirection,
   SortState,
+  SelectionColumnOptions,
   SelectionMode,
   VirtualWindow,
 } from './types'

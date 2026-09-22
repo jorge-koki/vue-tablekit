@@ -13,6 +13,7 @@ import type { ProjectRow } from './data'
 import { SERVER_LATENCY } from './server'
 import { GROUPING_PRESETS } from './grouping'
 import type { GroupingPresetId } from './grouping'
+import DemoZoomStepper from './DemoZoomStepper.vue'
 
 /**
  * Panel de controles: la primera de las tres columnas de la demo.
@@ -49,6 +50,7 @@ const emit = defineEmits<{
   expandAll: []
   collapseAll: []
   resetLayout: []
+  toggleFullscreen: []
 }>()
 
 /* ------------------------------------------------------------------ Datos */
@@ -98,6 +100,34 @@ const dense = defineModel<boolean>('dense', { required: true })
  * un modo aparte para esto.
  */
 const rowHeightMode = defineModel<'fija' | 'prioridad'>('rowHeightMode', { required: true })
+
+/**
+ * Zoom, por la misma escalera que ofrece cualquier hoja de cálculo.
+ *
+ * El control salió a `DemoZoomStepper.vue` porque se muestra también en la barra
+ * `#toolbar` de la tabla, que en pantalla completa es la única que queda a la
+ * vista. Acá queda el modelo y allá el control, que es lo que impide que las dos
+ * copias se separen.
+ *
+ * Por dentro la prop es un FACTOR, no un porcentaje: `1.25`, no `125`.
+ */
+const zoom = defineModel<number>('zoom', { required: true })
+
+/**
+ * Si la tabla está en pantalla completa.
+ *
+ * Se recibe como modelo solo para ETIQUETAR el botón, no para accionarlo: el
+ * gesto se emite y lo resuelve `App.vue` con los métodos imperativos de la
+ * tabla, que corren dentro del clic. Entrar en pantalla completa exige
+ * activación del usuario y ese es el camino que no depende de cuántos saltos
+ * meta el framework entre el clic y la prop.
+ *
+ * Que el modelo mande la etiqueta es además lo que hace visible la mitad
+ * incómoda de esta función: al salir con ESC o con F11 —que son teclas del
+ * navegador y no de la página— la tabla lo anuncia por `update:fullscreen`, y el
+ * botón vuelve solo a decir "Pantalla completa".
+ */
+const fullscreen = defineModel<boolean>('fullscreen', { required: true })
 
 /* -------------------------------------------------------------- Agrupación */
 
@@ -237,6 +267,36 @@ const columnVisibility = defineModel<ColumnVisibilityState>('columnVisibility', 
       <p v-if="rowHeightMode === 'prioridad'" class="demo-field-note">
         Crítica <strong>88px</strong>, alta <strong>64px</strong>, el resto el alto normal. Mira que
         la selección, el editor y la regleta acompañan cada alto.
+      </p>
+
+      <!--
+        El MISMO componente que llena la barra `#toolbar` de la tabla, con el
+        mismo modelo. Los dos se mueven juntos porque son uno solo montado dos
+        veces, no dos copias del mismo marcado.
+      -->
+      <div class="demo-field">
+        <span>Zoom</span>
+        <DemoZoomStepper v-model="zoom" />
+      </div>
+
+      <p v-if="zoom !== 1" class="demo-field-note">
+        No es un <strong>transform</strong>: la tabla escala sus métricas, así que el arrastre de
+        selección y el borde de una columna siguen cayendo donde apunta el cursor. Ajusta un ancho
+        acá y vuelve al 100%: queda como lo dejaste.
+      </p>
+
+      <div class="demo-actions">
+        <button type="button" class="demo-button" @click="emit('toggleFullscreen')">
+          {{ fullscreen ? 'Salir de pantalla completa' : 'Pantalla completa' }}
+        </button>
+      </div>
+
+      <p class="demo-field-note">
+        Usa la <strong>Fullscreen API</strong> del navegador, no un
+        <strong>position: fixed</strong>. Adentro queda a la vista la barra
+        <strong>#toolbar</strong> de la tabla, que acá lleva el mismo escalón de zoom y un botón
+        para salir. Sal también con <strong>Esc</strong>: la tabla lo detecta y este botón vuelve
+        solo.
       </p>
     </fieldset>
 

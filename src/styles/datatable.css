@@ -101,6 +101,17 @@
   /* Métricas. El componente sobrescribe las dos alturas inline. */
   --dt-row-height: 40px;
   --dt-header-height: 44px;
+  /*
+   * Factor de la prop `zoom`, escrito inline por el componente.
+   *
+   * Las alturas y los anchos llegan ya multiplicados desde JS, porque de ellos
+   * dependen cuentas que se hacen en cada frame. La tipografía es la excepción y
+   * viaja como factor: `--dt-font-size` es un token que el consumidor puede
+   * pisar desde su propia hoja, y escribir el tamaño resuelto inline le ganaría
+   * a esa declaración y le rompería la personalización. Con el factor aparte, el
+   * token sigue siendo suyo y el zoom lo multiplica igual.
+   */
+  --dt-zoom: 1;
   --dt-font-size: 0.875rem;
   --dt-cell-px: 0.75rem;
   /* Sangría que suma cada nivel de anidamiento en una cabecera de grupo. */
@@ -158,7 +169,16 @@
   border-radius: var(--dt-root-radius);
   background: var(--dt-bg);
   color: var(--dt-text);
-  font-size: var(--dt-font-size);
+  /*
+   * El ÚNICO lugar donde el zoom toca la tipografía.
+   *
+   * Todo lo que hay debajo mide en `em` —`0.8125em` en un badge, `0.75em` en la
+   * insignia de un grupo—, así que multiplicar acá arriba escala la escala
+   * entera con una sola regla. Escalar cada regla a mano habría sido la misma
+   * cuenta repetida en una docena de lugares, y cada uno de ellos un lugar donde
+   * la próxima regla se olvida de sumarse.
+   */
+  font-size: calc(var(--dt-font-size) * var(--dt-zoom));
   line-height: 1.4;
   /*
    * La grilla NO selecciona texto. Nunca.
@@ -765,7 +785,10 @@
   border: 1px solid var(--dt-primary);
   background: var(--dt-bg-elevated);
   color: var(--dt-text);
-  font-size: var(--dt-font-size);
+  /* Heredado y no `var(--dt-font-size)`: el fantasma es una copia del
+     encabezado, y el encabezado ya recibe el tamaño de `.dt-root` con el zoom
+     aplicado. Repetir el token acá lo dejaría en tamaño natural. */
+  font-size: inherit;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -995,6 +1018,76 @@
   height: 100%;
   top: 0;
   background: var(--dt-primary);
+}
+
+/* ------------------------------------------ Barra de encabezado (`#toolbar`) */
+
+/*
+ * La caja la pone la librería; lo que va adentro es del consumidor.
+ *
+ * Es fina a propósito: cada píxel que se lleva se lo saca a las filas, que son
+ * lo que la tabla vino a mostrar. Por eso no declara alto propio y lo toma del
+ * contenido —un control alto la ensancha, un texto la deja mínima— en vez de
+ * fijar un número que después haya que pelear desde afuera.
+ *
+ * `flex: none` la deja fuera del reparto de alto de la columna: el viewport es
+ * `flex: 1 1 auto` y sin esto la barra se encogería junto con él.
+ *
+ * Las medidas van en `em` y no en `rem` para que rueden con el zoom, igual que
+ * todo lo que cuelga del `font-size` de la raíz. En `rem` la barra se quedaría
+ * del mismo alto mientras la tabla se agranda alrededor.
+ */
+.dt-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.375em 0.75em;
+  border-bottom: 1px solid var(--dt-border);
+  background: var(--dt-bg-elevated);
+}
+
+/* ------------------------------------------------------- Pantalla completa */
+
+/*
+ * El fondo lo pinta la RAÍZ, y por eso esta regla existe.
+ *
+ * El `::backdrop` de un elemento en pantalla completa es NEGRO por defecto, en
+ * los dos temas y sin preguntarle a nadie. Cualquier hueco por el que se lo vea
+ * se lee como un error de pintado, y sobre tema claro es un marco negro
+ * alrededor de la tabla. La raíz ya declara `background: var(--dt-bg)` más
+ * arriba; acá se vuelve a declarar porque en este estado deja de ser una
+ * preferencia de estilo y pasa a ser lo único que tapa ese negro.
+ *
+ * El redondeo y el borde se van por la misma razón de fondo: la caja ya no está
+ * adentro de nada. `radiusBorder` existe para que la tabla acompañe el radio del
+ * panel que la contiene, y acá el panel es la pantalla; con `radiusBorder="lg"`
+ * las cuatro esquinas redondeadas dejaban asomar el backdrop, cuatro mordiscos
+ * negros contra el borde del monitor.
+ */
+.dt-root:fullscreen {
+  border: none;
+  border-radius: 0;
+  background: var(--dt-bg);
+}
+
+/*
+ * Y el backdrop igual, por si llega a verse.
+ *
+ * Con la raíz ocupando la pantalla entera —el navegador le impone `width` y
+ * `height` al 100%— esta capa queda detrás y no se ve. Se pinta lo mismo porque
+ * durante la transición de entrada y de salida sí asoma, y ahí el negro por
+ * defecto es un parpadeo.
+ *
+ * `::backdrop` HEREDA las custom properties de su elemento originante, así que
+ * `--dt-bg` llega con el valor del tema vigente sin repetir un solo color ni
+ * duplicar los tres selectores de tema de más abajo. En un navegador que
+ * todavía no implemente esa herencia el token no resuelve y la capa queda
+ * transparente: se pierde el pulido de la transición, no el fondo, que lo sigue
+ * pintando la raíz.
+ */
+.dt-root:fullscreen::backdrop {
+  background: var(--dt-bg);
 }
 
 /* ---------------------------------------------------------------- Viewport */
