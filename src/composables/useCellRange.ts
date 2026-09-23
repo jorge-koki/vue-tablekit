@@ -1,5 +1,5 @@
 import { computed, shallowRef } from 'vue'
-import type { ComputedRef } from 'vue'
+import type { ComputedRef, ShallowRef } from 'vue'
 import type { CellPosition, CellRange } from '../types'
 import type { ResolvedColumn } from './useColumnLayout'
 
@@ -78,6 +78,22 @@ export interface CellRangeApi {
    * no resuelve.
    */
   rect: ComputedRef<RangeRect | null>
+  /**
+   * TODOS los rangos seleccionados, en el orden en que se eligieron: los que se
+   * sumaron con `Ctrl`+clic y, al final, el que se está extendiendo —con una
+   * sola celda, su ancla y su foco coinciden—. Vacío sin celda activa.
+   */
+  ranges: ComputedRef<readonly CellRange[]>
+  /** Los rangos sumados con `Ctrl`+clic, sin el que se está extendiendo. */
+  extras: Readonly<ShallowRef<readonly CellRange[]>>
+  /** Los rectángulos de los rangos sumados, sin el que se está extendiendo. */
+  extraRects: ComputedRef<readonly RangeRect[]>
+  /**
+   * `Ctrl`+clic: guarda el rango actual y empieza uno nuevo en `position`, que
+   * pasa a ser la celda activa. Lo que viene después —arrastrar,
+   * `Shift`+clic, `Shift`+flechas— extiende el nuevo y deja quietos los demás.
+   */
+  add(position: CellPosition): void
   /** Mueve la punta móvil. Acota a la grilla. No toca la celda activa. */
   extendTo(position: CellPosition): void
   /** Vuelve a una sola celda. La celda activa queda donde está. */
@@ -107,6 +123,14 @@ export function useCellRange<TRow extends Record<string, unknown>>(
    * que la comparación solo descarta lo que vino de afuera.
    */
   const focus = shallowRef<{ from: CellPosition; to: CellPosition } | null>(null)
+
+  /**
+   * Los rangos que se sumaron con `Ctrl`+clic, en orden. El que se está
+   * extendiendo NO está acá: vive en `focus` y el ancla, igual que siempre, así
+   * que todo lo que ya sabía manejar un rango sigue manejando ese sin cambios.
+   * Cualquier cosa que colapse la selección los descarta.
+   */
+  const extra = shallowRef<readonly CellRange[]>([])
 
   /** Índice de una clave dentro de las columnas visibles, o -1. */
   function columnIndexOf(columnKey: string): number {
@@ -188,6 +212,47 @@ export function useCellRange<TRow extends Record<string, unknown>>(
     return { rowIndex, columnKey: column.key }
   }
 
+  /** El rectángulo de un rango, contra las columnas vigentes, o `null`. */
+  function rectOf(target: CellRange): RangeRect | null {
+    const from = columnIndexOf(target.anchor.columnKey)
+    const to = columnIndexOf(target.focus.columnKey)
+    if (from === -1 || to === -1) return null
+    return {
+      rowStart: Math.min(target.anchor.rowIndex, target.focus.rowIndex),
+      rowEnd: Math.max(target.anchor.rowIndex, target.focus.rowIndex),
+      columnStart: Math.min(from, to),
+      columnEnd: Math.max(from, to),
+    }
+  }
+
+  const extraRects = computed<readonly RangeRect[]>(() => {
+    const rects: RangeRect[] = []
+    for (const target of extra.value) {
+      const found = rectOf(target)
+      if (found) rects.push(found)
+    }
+    return rects
+  })
+
+  const ranges = computed<readonly CellRange[]>(() => {
+    const anchor = options.anchor()
+    if (!anchor) return extra.value
+    return [...extra.value, range.value ?? { anchor, focus: anchor }]
+  })
+
+  function add(position: CellPosition): void {
+    if (!options.enabled()) return
+    const next = clampPosition(position)
+    if (!next) return
+    const anchor = options.anchor()
+    const kept = anchor ? [...extra.value, range.value ?? { anchor, focus: anchor }] : extra.value
+    // `setAnchor` mueve la celda activa, y moverla colapsa —descarta los
+    // sumados—: se vuelven a poner DESPUÉS, con el anterior agregado.
+    options.setAnchor(next)
+    focus.value = null
+    extra.value = kept
+  }
+
   function extendTo(position: CellPosition): void {
     if (!options.enabled()) return
     const anchor = options.anchor()
@@ -206,6 +271,7 @@ export function useCellRange<TRow extends Record<string, unknown>>(
   }
 
   function collapse(): void {
+    if (extra.value.length > 0) extra.value = []
     if (focus.value === null) return
     focus.value = null
   }
@@ -247,5 +313,5 @@ export function useCellRange<TRow extends Record<string, unknown>>(
     focus.value = { from: anchor, to }
   }
 
-  return { range, rect, extendTo, collapse, selectAll, set }
+  return { range, rect, ranges, extras: extra, extraRects, add, extendTo, collapse, selectAll, set }
 }

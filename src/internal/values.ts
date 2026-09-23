@@ -1,4 +1,4 @@
-import type { CellValue, DataTableColumn } from '../types'
+import type { CellEditorType, CellOption, CellValue, DataTableColumn } from '../types'
 import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './constants'
 
 /**
@@ -30,7 +30,18 @@ export function toCellValue(value: unknown): CellValue {
     return value
   }
   if (value instanceof Date) return value
+  if (isValueList(value)) return value
   return String(value)
+}
+
+/**
+ * Si un valor es una lista de textos y números: lo que `CellValue` admite como
+ * lista. Una lista con cualquier otra cosa adentro sigue siendo texto.
+ */
+export function isValueList(value: unknown): value is readonly (string | number)[] {
+  if (!Array.isArray(value)) return false
+  const items: readonly unknown[] = value
+  return items.every((item) => typeof item === 'string' || typeof item === 'number')
 }
 
 /**
@@ -89,6 +100,9 @@ export function formatCellValue(value: CellValue): string {
 export function cellValuesEqual(a: CellValue, b: CellValue): boolean {
   if (a instanceof Date) return b instanceof Date && a.getTime() === b.getTime()
   if (b instanceof Date) return false
+  // Dos listas son iguales si tienen lo mismo en el mismo orden: una lista nueva
+  // con las mismas etiquetas no es un cambio.
+  if (Array.isArray(a) || Array.isArray(b)) return rawValuesEqual(a, b)
   return Object.is(a, b)
 }
 
@@ -135,6 +149,7 @@ export function rawValuesEqual(a: unknown, b: unknown): boolean {
 export function toEditString(value: CellValue): string {
   if (value === null || value === undefined) return ''
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString()
+  if (typeof value === 'object') return value.join(', ')
   return String(value)
 }
 
@@ -208,9 +223,216 @@ export function coerceEditValue(raw: string, previous: CellValue): CellValue {
     return Number.isNaN(parsed.getTime()) ? raw : parsed
   }
 
+  if (Array.isArray(previous)) return parseValueList(raw, previous)
+
   // `null` / `undefined` / `string`: no hay nada de donde inferir, se conserva
   // el texto tal cual lo escribió el usuario.
   return raw
+}
+
+/**
+ * El valor de una celda vaciada con `Supr` o `Retroceso`, según su editor.
+ *
+ * Es lo mismo que dejaría el editor al borrar su contenido y confirmar, así que
+ * vaciar no inventa una semántica aparte: texto queda en `''`, número y fecha en
+ * `null` —un campo numérico vacío no es un cero—, una casilla en `false` y una
+ * lista, en la lista vacía. Un texto que ya estaba en `null` se queda en `null`:
+ * pasarlo a `''` sería un cambio que nadie hizo.
+ */
+export function clearedValue(type: CellEditorType, current: CellValue): CellValue {
+  if (type === 'checkbox') return false
+  if (type === 'text' && typeof current === 'string') return ''
+  if (type === 'tags') return []
+  return null
+}
+
+/**
+ * Convierte un texto separado por comas en una lista: `"a, b, c"` → `['a', 'b', 'c']`.
+ *
+ * Es lo que escribe el editor de texto sobre una columna de lista, y lo que llega
+ * al pegar en ella. Los vacíos se descartan —`"a,,b"` son dos etiquetas— y, si la
+ * lista anterior era de números, lo que se lee como número vuelve a serlo.
+ */
+export function parseValueList(raw: string, previous?: CellValue): (string | number)[] {
+  const numeric =
+    Array.isArray(previous) &&
+    previous.length > 0 &&
+    previous.every((item) => typeof item === 'number')
+  const items: (string | number)[] = []
+  for (const part of raw.split(',')) {
+    const item = part.trim()
+    if (item === '') continue
+    const asNumber = Number(item)
+    items.push(numeric && !Number.isNaN(asNumber) ? asNumber : item)
+  }
+  return items
+}
+
+/**
+ * Marca de "este texto no se puede convertir": la celda queda afuera del lote y
+ * se anuncia con `editInvalid`. Es un símbolo y no `undefined` porque
+ * `undefined` es un {@link CellValue} legítimo.
+ */
+export const REJECTED_VALUE: unique symbol = Symbol('dt-rejected')
+
+/** Un valor convertido desde texto, o la marca de rechazo. */
+export type ParsedCellValue = CellValue | typeof REJECTED_VALUE
+
+/**
+ * Lee un número escrito como lo escribe una persona o una hoja de cálculo.
+ *
+ * Acepta separadores de miles y decimales de cualquiera de las dos convenciones
+ * —`1,234.5` y `1.234,5`—, un símbolo o código de moneda adelante y un sufijo
+ * atrás —`$1,200`, `45%`, `1.234,50 €`—, que es justamente lo que deja en el
+ * portapapeles el copiado de una columna formateada. Con los dos separadores a
+ * la vista, el ÚLTIMO es el decimal. Con uno solo repetido, son miles. Con una
+ * sola coma y nada más, decide la configuración regional: en una donde la coma
+ * es el decimal, `1,5` es uno y medio.
+ *
+ * Devuelve `null` si no hay un número que leer.
+ */
+export function parseLocaleNumber(text: string): number | null {
+  let compact = text.trim().replace(/[\s  ]/g, '')
+  compact = compact.replace(/^[^\d+\-.,]+/, '').replace(/[^\d.,]+$/, '')
+  if (compact === '') return null
+
+  const direct = Number(compact)
+  if (!Number.isNaN(direct)) return direct
+
+  const lastComma = compact.lastIndexOf(',')
+  const lastDot = compact.lastIndexOf('.')
+  let normalized: string
+  if (lastComma !== -1 && lastDot !== -1) {
+    const decimal = lastComma > lastDot ? ',' : '.'
+    const group = decimal === ',' ? '.' : ','
+    normalized = compact.split(group).join('').replace(decimal, '.')
+  } else if (lastComma !== -1) {
+    const single = compact.indexOf(',') === lastComma
+    normalized =
+      single && localeDecimalSeparator() === ','
+        ? compact.replace(',', '.')
+        : compact.split(',').join('')
+  } else {
+    normalized = compact.split('.').join('')
+  }
+
+  const parsed = Number(normalized)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+let decimalSeparator: string | null = null
+
+/** El separador decimal de la configuración regional del navegador. */
+function localeDecimalSeparator(): string {
+  if (decimalSeparator === null) {
+    decimalSeparator =
+      new Intl.NumberFormat().formatToParts(1.5).find((part) => part.type === 'decimal')?.value ??
+      '.'
+  }
+  return decimalSeparator
+}
+
+const TRUE_WORDS = new Set(['true', '1', 'yes', 'y', 'sí', 'si', 'verdadero', 'x', '✓', '✔'])
+const FALSE_WORDS = new Set(['false', '0', 'no', 'n', 'falso'])
+
+/** Lee un booleano escrito en inglés o en español, o `null`. */
+export function parseBooleanText(text: string): boolean | null {
+  const word = text.trim().toLowerCase()
+  if (TRUE_WORDS.has(word)) return true
+  if (FALSE_WORDS.has(word)) return false
+  return null
+}
+
+/**
+ * Lee una fecha y la devuelve del MISMO tipo que tenía la celda: un string ISO
+ * `YYYY-MM-DD` si era un string, un `Date` si no. `null` si no es una fecha.
+ */
+export function parseDateText(text: string, previous: CellValue): CellValue | null {
+  const trimmed = text.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return fromDateInputString(trimmed, previous)
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  if (typeof previous === 'string') return parsed.toISOString().slice(0, 10)
+  return parsed
+}
+
+/**
+ * El valor de la opción que corresponde a un texto: por su valor o por su
+ * etiqueta, sin distinguir mayúsculas. El copiado escribe la ETIQUETA —lo que se
+ * ve—, así que pegar lo copiado tiene que poder volver al valor.
+ */
+export function optionValueFor(
+  text: string,
+  options: readonly CellOption[] | undefined,
+): CellOption['value'] | null {
+  if (!options) return null
+  const wanted = text.trim().toLowerCase()
+  for (const option of options) {
+    if (String(option.value).toLowerCase() === wanted) return option.value
+  }
+  for (const option of options) {
+    if (option.label.trim().toLowerCase() === wanted) return option.value
+  }
+  return null
+}
+
+/**
+ * Convierte el texto pegado en una celda al valor de esa celda, según su editor.
+ *
+ * Un texto vacío vacía la celda, igual que `Supr`: pegar un bloque con huecos
+ * deja huecos. Lo que no se puede leer —letras en un número, una opción que no
+ * existe— devuelve {@link REJECTED_VALUE}.
+ */
+export function textToCellValue(
+  text: string,
+  type: CellEditorType,
+  current: CellValue,
+  options?: readonly CellOption[],
+): ParsedCellValue {
+  if (text.trim() === '') return clearedValue(type, current)
+  switch (type) {
+    case 'checkbox':
+      return parseBooleanText(text) ?? REJECTED_VALUE
+    case 'number':
+      return parseLocaleNumber(text) ?? REJECTED_VALUE
+    case 'date':
+      return parseDateText(text, current) ?? REJECTED_VALUE
+    case 'select':
+      return optionValueFor(text, options) ?? REJECTED_VALUE
+    case 'tags':
+      return parseTagsText(text, current, options)
+    default:
+      return coerceEditValue(text, current)
+  }
+}
+
+/**
+ * Lee una lista escrita como texto —`"Frontend, Urgente"`— y devuelve sus
+ * valores: cada etiqueta que coincide con una opción vuelve a su `value`, y lo
+ * demás queda como se escribió. Es la lectura que comparten el editor de listas
+ * y el pegado.
+ */
+export function parseTagsText(
+  text: string,
+  previous: CellValue,
+  options: readonly CellOption[] | undefined,
+): (string | number)[] {
+  return parseValueList(text, previous).map((item) => {
+    if (typeof item !== 'string') return item
+    const value = optionValueFor(item, options)
+    return typeof value === 'string' || typeof value === 'number' ? value : item
+  })
+}
+
+/**
+ * Escribe una lista como texto, con la ETIQUETA de cada opción: lo que el editor
+ * de listas muestra al abrirse, y lo que se lee de vuelta con {@link parseTagsText}.
+ */
+export function tagsToText(value: CellValue, options: readonly CellOption[] | undefined): string {
+  if (!Array.isArray(value)) return toEditString(value)
+  return value
+    .map((item) => options?.find((option) => option.value === item)?.label ?? String(item))
+    .join(', ')
 }
 
 /** Acota `value` al rango `[min, max]`, tolerando rangos invertidos o no finitos. */

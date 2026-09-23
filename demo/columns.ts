@@ -83,12 +83,17 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
     // Y soltable desde el encabezado: `pinned` es el estado INICIAL, `pinnable`
     // es el permiso. El botón del header la suelta y la vuelve a anclar.
     pinnable: 'start',
+    // Un proyecto sin nombre no se identifica: con `Enter` el editor queda abierto
+    // con este mensaje, y vaciarlo con `Supr` lo deja afuera del lote.
+    validate: (value: CellValue): string | null =>
+      typeof value === 'string' && value.trim() === '' ? 'El proyecto necesita un nombre' : null,
     // Sin `editor`: el valor es un string y no hay `options`, así que se infiere `text`.
     // Tampoco declara `aggregate`: un agregado se pinta en el offset de SU columna,
     // y en la primera taparía el chevrón, la etiqueta y el contador del grupo.
   },
   {
     key: 'owner',
+    headerGroup: 'Proyecto',
     label: 'Responsable',
     width: 70,
     resizable: true,
@@ -100,6 +105,7 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
   },
   {
     key: 'description',
+    headerGroup: 'Proyecto',
     label: 'Descripción',
     width: 280,
     minWidth: 140,
@@ -129,6 +135,7 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
   },
   {
     key: 'status',
+    headerGroup: 'Seguimiento',
     label: 'Estado',
     width: 130,
     resizable: true,
@@ -154,6 +161,7 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
   },
   {
     key: 'priority',
+    headerGroup: 'Seguimiento',
     label: 'Prioridad',
     width: 110,
     resizable: true,
@@ -178,6 +186,7 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
   },
   {
     key: 'progress',
+    headerGroup: 'Seguimiento',
     label: 'Progreso',
     width: 120,
     resizable: true,
@@ -200,6 +209,7 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
   },
   {
     key: 'budget',
+    headerGroup: 'Plan',
     label: 'Presupuesto',
     width: 130,
     resizable: true,
@@ -210,6 +220,9 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
     // `cellClass` también corre en el camino caliente: una comparación y nada más.
     cellClass: (value: CellValue): string | undefined =>
       typeof value === 'number' && value >= HIGH_BUDGET ? 'demo-cell-high-budget' : undefined,
+    // `false` usa el mensaje de `labels.invalidValue`. Un presupuesto vacío sí
+    // vale —es `null`, "sin asignar"—; uno negativo no.
+    validate: (value: CellValue): boolean => !(typeof value === 'number' && value < 0),
     // El total del grupo, en la misma moneda que las celdas. El formateador es
     // el mismo; lo que cambia es la firma, porque aquí no hay fila que pasar.
     aggregate: 'sum',
@@ -221,13 +234,16 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
     label: 'Etiquetas',
     width: 220,
     resizable: true,
-    // El renderer `tags` lee el array desde `ctx.raw`. No es editable: no existe
-    // un editor de selección múltiple incluido.
+    // El renderer `tags` lee el array desde `ctx.raw`. Editable con el editor de
+    // listas, que se infiere del valor: un input donde la lista se escribe separada
+    // por comas y, como la columna declara `options`, un panel de casillas debajo.
     renderer: 'tags',
+    editable: true,
     options: TAG_OPTIONS,
   },
   {
     key: 'dueDate',
+    headerGroup: 'Plan',
     label: 'Vencimiento',
     width: 130,
     resizable: true,

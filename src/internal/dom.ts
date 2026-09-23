@@ -920,10 +920,13 @@ export function setRowActive(node: PooledRowElement, active: boolean): void {
  *
  * Es 1-based porque así lo define ARIA, y cuenta la fila de encabezado.
  */
-export function setRowAriaIndex(node: PooledRowElement, rowIndex: number): void {
-  if (node.__dtAriaRow === rowIndex) return
-  node.__dtAriaRow = rowIndex
-  node.setAttribute('aria-rowindex', String(rowIndex + 2))
+export function setRowAriaIndex(node: PooledRowElement, rowIndex: number, headerRows = 1): void {
+  // Se guarda el índice YA corrido: si cambia la cantidad de filas de
+  // encabezado —aparece la de grupos— la misma fila tiene que reescribirse.
+  const ariaIndex = rowIndex + headerRows + 1
+  if (node.__dtAriaRow === ariaIndex) return
+  node.__dtAriaRow = ariaIndex
+  node.setAttribute('aria-rowindex', String(ariaIndex))
 }
 
 /** Escribe `aria-selected` sobre la fila, solo cuando cambia. */

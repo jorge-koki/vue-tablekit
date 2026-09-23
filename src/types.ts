@@ -9,15 +9,24 @@
  */
 
 /**
+ * Una lista de valores sueltos: lo que muestra el renderer `tags` y lo que edita
+ * el editor `tags`.
+ *
+ * Solo textos y números, que es lo que una píldora sabe mostrar y lo que se
+ * compara por valor. Una lista de objetos sigue necesitando un `accessor`.
+ */
+export type CellValueList = readonly (string | number)[]
+
+/**
  * Todos los valores que la tabla sabe renderizar sin ayuda.
  *
- * Cualquier cosa fuera de esta unión (objetos, arrays, instancias de clase)
- * debe mapearse con {@link DataTableColumn.accessor} o
+ * Cualquier cosa fuera de esta unión (objetos, listas de objetos, instancias de
+ * clase) debe mapearse con {@link DataTableColumn.accessor} o
  * {@link DataTableColumn.format}, porque el camino de pintado escribe el valor
  * directo en `textContent` y no tiene opinión sobre cómo deberían verse tus
  * objetos de dominio.
  */
-export type CellValue = string | number | boolean | null | undefined | Date
+export type CellValue = string | number | boolean | null | undefined | Date | CellValueList
 
 /**
  * Alineación horizontal del texto de una celda.
@@ -134,6 +143,13 @@ export interface DataTableLabels {
   hideColumn?: string
   /** `'Reset columns'`. */
   resetColumns?: string
+  /** Mensaje de un valor rechazado cuando `column.validate` devuelve `false`. `'Invalid value'`. */
+  invalidValue?: string
+  /**
+   * Nombre del tirador de ancho mientras está en modo ancho, antes del título de
+   * la columna: `'Resize column'` se anuncia como "Resize column: Cliente".
+   */
+  resizeColumn?: string
 }
 
 /** Sentido de un criterio de ordenamiento. */
@@ -290,11 +306,51 @@ export interface DataTableColumn<TRow> {
   /** Si las celdas de esta columna se pueden editar. */
   editable?: boolean
   /**
+   * Título de un grupo de columnas, en una fila de encabezado por encima de la
+   * de títulos.
+   *
+   * Las columnas VISIBLES y CONTIGUAS con el mismo `headerGroup` comparten un
+   * solo título que las abarca. Se calcula sobre el orden vigente, así que
+   * ocultar o mover columnas lo rearma solo: una columna arrastrada fuera de su
+   * grupo parte el título en dos, y una anclada queda en su propia tira. La
+   * fila de grupos aparece en cuanto una columna visible lo declara, y una
+   * columna sin `headerGroup` deja vacío el lugar de arriba.
+   *
+   * No es `groupBy`: aquel agrupa FILAS por su valor; esto agrupa COLUMNAS bajo
+   * un título.
+   */
+  headerGroup?: string
+  /**
    * Formatea el valor crudo al string que se escribe en el `textContent` de la
    * celda. DEBE ser pura y barata: corre en cada pintado, sobre el camino
    * caliente del scroll.
    */
   format?: (value: CellValue, row: TRow, rowIndex: number) => string
+  /**
+   * Decide si un valor nuevo se acepta. Devuelve un mensaje —o `false`— para
+   * rechazarlo; cualquier otra cosa lo acepta.
+   *
+   * Corre en TODAS las vías que escriben: el editor, la casilla, el editor de
+   * slot, vaciar, pegar y deshacer. Con el editor abierto y `Enter`, un rechazo
+   * deja el editor abierto con el mensaje debajo de la celda; al salir de la
+   * celda de otra forma, lo escrito se descarta. En un lote, la celda
+   * rechazada queda afuera y las demás siguen. Cada rechazo se anuncia con
+   * `editInvalid`.
+   *
+   * `false` usa el mensaje de `labels.invalidValue`. `rowIndex` indexa `rows`,
+   * igual que en los eventos. No corre sobre un valor igual al anterior: no es
+   * un cambio.
+   */
+  validate?: (value: CellValue, row: TRow, rowIndex: number) => string | boolean | null | undefined
+  /**
+   * Convierte el texto pegado en el valor de la celda.
+   *
+   * Es la inversa de `format` para `Ctrl`+`V`: el portapapeles solo trae texto,
+   * y sin esto la tabla lo interpreta por el editor de la columna —número,
+   * fecha, casilla, opción por su valor o su etiqueta, lista separada por
+   * comas—. Devolver `undefined` rechaza la celda, que queda afuera del lote.
+   */
+  parse?: (text: string, row: TRow, rowIndex: number) => CellValue
   /**
    * Da formato al valor agregado que se muestra en la cabecera de un grupo.
    *
@@ -372,7 +428,7 @@ export interface DataTableColumn<TRow> {
  * sin que la tabla monte un componente por celda. Ver
  * {@link CellEditorSlotProps}.
  */
-export type CellEditorType = 'text' | 'number' | 'select' | 'checkbox' | 'date' | 'slot'
+export type CellEditorType = 'text' | 'number' | 'select' | 'checkbox' | 'date' | 'tags' | 'slot'
 
 /**
  * Lo que recibe el slot `#editor` mientras hay una celda abierta con
@@ -407,6 +463,13 @@ export interface CellEditorSlotProps<TRow> {
   columnKey: string
   /** Valor con el que se abrió el editor, leído por el accessor de la columna. */
   value: CellValue
+  /**
+   * El mensaje del último `commit` que `column.validate` rechazó, o `null`.
+   *
+   * Un rechazo deja el editor abierto: mostrar el mensaje y dejar corregir es
+   * cosa del contenido del slot. Se vuelve `null` al cerrar.
+   */
+  error: string | null
   /**
    * Cierra el editor confirmando `newValue`.
    *
@@ -1005,8 +1068,18 @@ export interface DataTableProps<TRow> {
    * qué recibe, qué tiene que devolver y qué cuesta.
    */
   rowHeight?: number | RowHeightResolver<TRow>
-  /** Altura del header en px. Por defecto 44, o 34 con `dense` encendido. */
+  /**
+   * Altura de la fila de títulos del encabezado, en px. Por defecto 44, o 34 con
+   * `dense` encendido. Con columnas agrupadas —ver `column.headerGroup`— el
+   * encabezado suma arriba la fila de grupos, de `headerGroupHeight`.
+   */
   headerHeight?: number
+  /**
+   * Altura de la fila de grupos de columnas, en px. Por defecto la misma que
+   * `headerHeight`. Solo cuenta si alguna columna visible declara
+   * `headerGroup`: sin grupos la fila no existe y no ocupa nada.
+   */
+  headerGroupHeight?: number
   /** Preset compacto: filas más bajas, tipografía menor, padding más ajustado. */
   dense?: boolean
   /**
@@ -1126,7 +1199,7 @@ export interface DataTableProps<TRow> {
    *
    * No es una columna: no se selecciona, no se copia, no se reordena ni se
    * oculta desde el selector de columnas, y queda fija mientras el resto
-   * scrollea en horizontal. Ver la sección de numeración del README.
+   * scrollea en horizontal. Ver "Presets visuales" en el README.
    */
   showRowNumbers?: boolean
   /**
@@ -1142,6 +1215,16 @@ export interface DataTableProps<TRow> {
    * fue es un umbral de unos pocos píxeles, no el orden de los eventos.
    */
   columnReorder?: boolean
+  /**
+   * Doble clic sobre el tirador de ancho para ajustar la columna a su contenido.
+   * Por defecto `true`.
+   *
+   * Vive donde vive el tirador: solo lo tienen las columnas con `resizable`, así
+   * que en una columna sin él no hay nada que ajustar. Con `false` el doble clic
+   * sobre el tirador no hace nada, y el arrastre y el modo ancho del teclado
+   * siguen como siempre.
+   */
+  columnAutoFit?: boolean
   /**
    * Clic en el encabezado de una columna para seleccionarla entera. Por defecto
    * `false`.
@@ -1351,6 +1434,17 @@ export interface DataTableProps<TRow> {
    */
   rangeSelection?: boolean
   /**
+   * Cuántos gestos recuerda el historial de `Ctrl`+`Z`. Por defecto `100`; `0`
+   * lo apaga.
+   *
+   * Un gesto es una edición, un vaciado o un pegado, con todas sus celdas. La
+   * tabla recuerda lo que ANUNCIÓ, no lo que el consumidor aplicó —no tiene
+   * cómo saberlo—, así que al deshacer cada celda se revierte solo si todavía
+   * tiene el valor anunciado. Con `rowKey` declarada, las filas se buscan por
+   * su clave y el historial sobrevive a un reordenamiento.
+   */
+  undoLimit?: number
+  /**
    * Celda activa. `v-model:active-cell`.
    *
    * Si se omite, la tabla mantiene el estado internamente. Si se pasa —incluido
@@ -1548,6 +1642,13 @@ export interface RangeSelectEvent<TRow> {
   readonly rowEnd: number
   /** Columnas abarcadas, en orden visual. */
   readonly columns: readonly DataTableColumn<TRow>[]
+  /**
+   * TODOS los rangos seleccionados, en el orden en que se eligieron: los que se
+   * sumaron con `Ctrl`+clic y, al final, el vigente —el que describen `range`,
+   * `rowStart`, `rowEnd` y `columns`—. Con una sola celda, su ancla y su foco
+   * coinciden. Sin `Ctrl`+clic tiene un solo elemento.
+   */
+  readonly ranges: readonly CellRange[]
 }
 
 /**
@@ -1631,16 +1732,33 @@ export interface CellRange {
 }
 
 /**
- * Se emite antes de que se abra el editor de una celda. **Cancelable.**
+ * Por qué vía llega una edición.
  *
- * Llamar a {@link BeforeEditEvent.cancel} desde un listener veta la edición: el
- * editor no se abre y no hay `afterEdit` posterior. Este es el punto de enganche
- * para chequeos de permisos, bloqueos por fila y "esta columna es de solo
- * lectura en este momento".
+ * - `'editor'`: el editor de una celda —doble clic, `Enter`, `F2`, empezar a
+ *   escribir— o la casilla que se alterna en el lugar.
+ * - `'clear'`: `Supr` o `Retroceso` sobre la selección.
+ * - `'paste'`: `Ctrl`+`V`.
+ * - `'undo'` / `'redo'`: `Ctrl`+`Z` y `Ctrl`+`Y`, o los métodos `undo()` y `redo()`.
+ */
+export type EditSource = 'editor' | 'clear' | 'paste' | 'undo' | 'redo'
+
+/** Las vías que escriben varias celdas de una vez, y por eso llegan como lote. */
+export type BatchEditSource = Exclude<EditSource, 'editor'>
+
+/**
+ * Se emite antes de editar una celda, por cualquier vía. **Cancelable.**
+ *
+ * Llamar a {@link BeforeEditEvent.cancel} desde un listener veta la edición de
+ * ESA celda: con el editor, no se abre y no hay `afterEdit` posterior; en un lote
+ * —vaciar, pegar, deshacer— la celda queda afuera y las demás siguen. Este es el
+ * punto de enganche para chequeos de permisos, bloqueos por fila y "esta columna
+ * es de solo lectura en este momento", y por eso ninguna vía lo esquiva.
  *
  * @typeParam TRow - Forma de una fila individual dentro de `rows`.
  */
 export interface BeforeEditEvent<TRow> {
+  /** Por qué vía llega la edición. Ver {@link EditSource}. */
+  source: EditSource
   /** El objeto de fila que se está editando. No debe mutarse. */
   row: TRow
   /** Índice de `row` dentro de la prop `rows`. */
@@ -1716,6 +1834,58 @@ export interface EditCommitEvent<TRow> {
    * editar una columna numérica te entrega un `number` y no un `string`.
    */
   newValue: CellValue
+}
+
+/**
+ * Se emite UNA vez por cada gesto que escribe varias celdas: vaciar, pegar,
+ * deshacer y rehacer.
+ *
+ * Es el equivalente en lote de {@link EditCommitEvent}, y cada cambio tiene su
+ * misma forma. Existe porque la tabla nunca escribe en `rows`: un `editCommit`
+ * por celda obligaría a copiar el array una vez por celda, y vaciar una columna
+ * de cien mil filas congelaría la página. {@link applyEdits} aplica el lote
+ * entero con una sola copia.
+ *
+ * Solo lleva las celdas que de verdad cambian: las de columnas sin `editable`,
+ * las vetadas por `beforeEdit`, las rechazadas por `validate` y las que ya
+ * tenían ese valor quedan afuera. Un gesto que no cambia nada no emite nada.
+ *
+ * @typeParam TRow - Forma de una fila individual dentro de `rows`.
+ */
+export interface CellsCommitEvent<TRow> {
+  /** Qué gesto produjo el lote. */
+  source: BatchEditSource
+  /**
+   * Los cambios, en orden de lectura: fila por fila y, dentro de cada una,
+   * columna por columna. Nunca está vacío. `rowIndex` indexa `rows`, igual que
+   * en `editCommit`.
+   */
+  changes: readonly EditCommitEvent<TRow>[]
+}
+
+/**
+ * Se emite cada vez que `column.validate` rechaza un valor, por cualquier vía.
+ *
+ * Es un aviso, no un veto: el rechazo ya ocurrió. Sirve para mostrar un toast,
+ * contar cuántas celdas de un pegado quedaron afuera o registrar el intento.
+ *
+ * @typeParam TRow - Forma de una fila individual dentro de `rows`.
+ */
+export interface EditInvalidEvent<TRow> {
+  /** Por qué vía llegó el valor rechazado. */
+  source: EditSource
+  /** La fila de la celda. */
+  row: TRow
+  /** Índice de `row` dentro de la prop `rows`. */
+  rowIndex: number
+  /** La definición de columna. */
+  column: DataTableColumn<TRow>
+  /** Alias de conveniencia de `column.key`. */
+  columnKey: string
+  /** El valor rechazado. */
+  value: CellValue
+  /** El mensaje: el que devolvió `validate`, o `labels.invalidValue`. */
+  message: string
 }
 
 /** Se emite cuando un arrastre de redimensionado termina con un ancho distinto. */
@@ -1924,4 +2094,20 @@ export interface DataTableInstance {
    * completa de otro componente de la página.
    */
   exitFullscreen(): void
+  /**
+   * Deshace el último gesto: lo mismo que `Ctrl`+`Z`. Emite un `cellsCommit` con
+   * `source: 'undo'`; no hace nada si no hay qué deshacer.
+   */
+  undo(): void
+  /** Rehace el último gesto deshecho: lo mismo que `Ctrl`+`Y`. `source: 'redo'`. */
+  redo(): void
+  /** Si hay algo que deshacer. Reactivo: sirve para habilitar un botón. */
+  canUndo(): boolean
+  /** Si hay algo que rehacer. Reactivo. */
+  canRedo(): boolean
+  /**
+   * Olvida el historial. Conviene llamarlo al reemplazar el dataset por otro:
+   * los gestos recordados hablan de filas que ya no están.
+   */
+  clearHistory(): void
 }

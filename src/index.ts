@@ -22,6 +22,7 @@ export default DataTable
 export type {
   AfterEditEvent,
   AggregationFn,
+  BatchEditSource,
   BeforeEditEvent,
   BuiltInAggregation,
   CellAlign,
@@ -35,7 +36,9 @@ export type {
   CellRenderer,
   CellRendererHandle,
   CellSelectEvent,
+  CellsCommitEvent,
   CellValue,
+  CellValueList,
   ColumnAggregation,
   ColumnResizeEvent,
   ColumnPin,
@@ -54,6 +57,8 @@ export type {
   DataTableTheme,
   DataTableVariant,
   EditCommitEvent,
+  EditInvalidEvent,
+  EditSource,
   FlatRow,
   GroupByState,
   GroupIdSegment,
@@ -140,6 +145,15 @@ export { groupId } from './internal/aggregations'
  * servidor no se usa: ahí el orden viaja en la consulta.
  */
 export { sortRows } from './internal/sorting'
+
+/**
+ * Aplica un lote de `cellsCommit` sobre las filas, con una sola copia del array.
+ *
+ * Es a los lotes lo que `sortRows` al orden: la tabla nunca escribe en `rows`, y
+ * esto es para que escribir sea una línea.
+ */
+export { applyEdits } from './internal/edits'
+export type { CellEdit } from './internal/edits'
 /*
  * Leer el estado de selección sin tener que conocer sus dos modos.
  *

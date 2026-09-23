@@ -9,15 +9,21 @@ import type {
   CellValue,
   DataTableColumn,
   EditCommitEvent,
+  EditInvalidEvent,
+  EditSource,
 } from '../types'
 import {
   cellValuesEqual,
   coerceEditValue,
+  REJECTED_VALUE,
   fromDateInputString,
+  parseTagsText,
   readCellValue,
+  tagsToText,
   toDateInputString,
   toEditString,
 } from '../internal/values'
+import type { ParsedCellValue } from '../internal/values'
 
 /** Rectángulo de una celda en coordenadas del canvas, no de la pantalla. */
 export interface CellGeometry {
@@ -63,6 +69,23 @@ export interface UseCellEditorOptions<TRow> {
   /** Emite `editCommit`. */
   emitEditCommit: (event: EditCommitEvent<TRow>) => void
   /**
+   * Valida un valor antes de publicarlo. Devuelve el mensaje de error, o `null`
+   * si el valor pasa.
+   *
+   * La regla la pone el componente —`column.validate` y el texto por defecto de
+   * `labels`—; este módulo solo decide qué hacer con la respuesta en cada vía.
+   */
+  validate?: (
+    position: CellPosition,
+    row: TRow,
+    column: DataTableColumn<TRow>,
+    value: CellValue,
+  ) => string | null
+  /** Emite `editInvalid`: un valor que `validate` rechazó. */
+  emitInvalid?: (event: EditInvalidEvent<TRow>) => void
+  /** Mensaje de un texto que no se pudo convertir al pegarlo. */
+  invalidMessage?: () => string
+  /**
    * Se invoca después de confirmar con Enter.
    *
    * Existe para que el componente pueda bajar la selección una fila, como hace
@@ -85,9 +108,14 @@ export interface UseCellEditorOptions<TRow> {
 }
 
 /** Resultado de {@link useCellEditor}. */
-export interface UseCellEditorReturn {
+export interface UseCellEditorReturn<TRow = unknown> {
   /** Celda en edición, o `null`. Reactivo: el pintado lo usa para marcar la celda. */
   editing: Readonly<Ref<CellPosition | null>>
+  /**
+   * El mensaje del último valor rechazado mientras el editor sigue abierto, o
+   * `null`. Reactivo: es lo que recibe el slot `#editor` como `error`.
+   */
+  error: Readonly<Ref<string | null>>
   /** Intenta abrir el editor. Devuelve `false` si se vetó o la celda no es editable. */
   beginEdit: (position: CellPosition, initialText?: string) => boolean
   /**
@@ -99,8 +127,15 @@ export interface UseCellEditorReturn {
    * esquive el veto.
    */
   commitValue: (position: CellPosition, newValue: CellValue) => boolean
-  /** Confirma la edición en curso. No hace nada si no hay ninguna. */
-  commit: () => void
+  /**
+   * Confirma la edición en curso. No hace nada si no hay ninguna.
+   *
+   * `explicit` es `Enter` o elegir una opción: un valor rechazado deja el editor
+   * ABIERTO con el error a la vista. Cualquier otro cierre —salir de la celda,
+   * scrollearla fuera de la vista— descarta lo escrito, porque no hay a quién
+   * mostrarle el error. Devuelve `false` si el editor quedó abierto.
+   */
+  commit: (explicit?: boolean) => boolean
   /**
    * Confirma la sesión abierta con el valor que entrega el slot `#editor`.
    *
@@ -127,6 +162,26 @@ export interface UseCellEditorReturn {
   syncPosition: () => void
   /** Tipo de editor que corresponde a una celda, ya inferido. */
   resolveEditorType: (position: CellPosition) => CellEditorType | null
+  /**
+   * Arma el cambio de una celda para un lote —vaciar, pegar, deshacer— sin abrir
+   * nada ni publicar nada.
+   *
+   * Aplica las mismas reglas que una edición suelta, en el mismo orden: la
+   * columna tiene que ser `editable`, el valor tiene que cambiar, `beforeEdit`
+   * no lo tiene que vetar y `validate` no lo tiene que rechazar. Devuelve `null`
+   * si alguna falla. `nextValue` recibe el tipo de editor inferido y el valor
+   * actual, y decide el nuevo; puede devolver `REJECTED_VALUE` —un texto pegado
+   * que no se pudo leer—, que se anuncia con `editInvalid` como cualquier rechazo.
+   *
+   * No emite `editCommit` ni `afterEdit`: el lote se anuncia entero, una vez,
+   * desde el componente. `rowIndex` sale en coordenadas VISIBLES, como todo lo de
+   * este módulo; traducirlo al dataset es del que emite.
+   */
+  prepareChange: (
+    position: CellPosition,
+    source: EditSource,
+    nextValue: (type: CellEditorType, current: CellValue) => ParsedCellValue,
+  ) => EditCommitEvent<TRow> | null
   /** Cierra el editor y libera listeners. */
   dispose: () => void
 }
@@ -158,6 +213,9 @@ export function inferEditorType<TRow>(
   value: CellValue,
 ): CellEditorType {
   if (column.editor) return column.editor
+  // Antes que `options`: una columna de etiquetas suele declarar sus opciones,
+  // y sin esto se inferiría un desplegable de UNA opción para editar una lista.
+  if (Array.isArray(value) || column.renderer === 'tags') return 'tags'
   if (typeof value === 'boolean') return 'checkbox'
   if (typeof value === 'number') return 'number'
   if (value instanceof Date) return 'date'
@@ -215,7 +273,7 @@ export function inferEditorType<TRow>(
  */
 export function useCellEditor<TRow extends Record<string, unknown>>(
   options: UseCellEditorOptions<TRow>,
-): UseCellEditorReturn {
+): UseCellEditorReturn<TRow> {
   const editing = shallowRef<CellPosition | null>(null)
 
   /** Controles ya construidos, uno por tipo. */
@@ -245,6 +303,9 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
    * duplicados.
    */
   let closing = false
+  const error = shallowRef<string | null>(null)
+  /** El globo con el mensaje de error, creado la primera vez que hace falta. */
+  let errorElement: HTMLElement | null = null
 
   /** Última geometría aplicada, para no reescribir estilos idénticos por frame. */
   let appliedGeometry: CellGeometry | null = null
@@ -289,7 +350,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     }
 
     const input = document.createElement('input')
-    input.className = 'dt-editor'
+    input.className = type === 'tags' ? 'dt-editor dt-editor--tags' : 'dt-editor'
     input.spellcheck = false
     if (type === 'number') input.type = 'number'
     else if (type === 'date') input.type = 'date'
@@ -311,6 +372,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     control.hidden = true
     control.addEventListener('keydown', handleKeyDown)
     control.addEventListener('blur', handleBlur)
+    control.addEventListener('input', handleInput)
     // Elegir una opción confirma de inmediato: es lo que espera cualquiera que
     // haya usado un desplegable en una hoja de cálculo.
     if (control instanceof HTMLSelectElement) control.addEventListener('change', handleSelectChange)
@@ -341,8 +403,13 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
   }
 
   /** Texto con el que se abre el control, según su tipo. */
-  function toControlValue(type: CellEditorType, value: CellValue): string {
+  function toControlValue(
+    type: CellEditorType,
+    value: CellValue,
+    column?: DataTableColumn<TRow>,
+  ): string {
     if (type === 'date') return toDateInputString(value)
+    if (type === 'tags') return tagsToText(value, column?.options)
     if (type === 'number') {
       if (typeof value === 'number' && Number.isFinite(value)) return String(value)
       return toEditString(value)
@@ -358,6 +425,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     column: DataTableColumn<TRow>,
   ): CellValue {
     if (type === 'date') return fromDateInputString(raw, previous)
+    if (type === 'tags') return parseTagsText(raw, previous, column.options)
 
     if (type === 'select') {
       // Se recupera el valor tipado de la opción: el `<select>` solo devuelve
@@ -453,7 +521,9 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     }
 
     const seeded = initialText !== undefined && type !== 'select' && type !== 'date'
-    control.value = seeded ? initialText : toControlValue(type, context.value)
+    control.value = seeded ? initialText : toControlValue(type, context.value, context.column)
+    if (type === 'tags' && control instanceof HTMLInputElement)
+      openTagsPicker(control, context.column)
 
     applyGeometry(position)
     control.hidden = false
@@ -485,6 +555,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     row: TRow,
     column: DataTableColumn<TRow>,
     value: CellValue,
+    source: EditSource = 'editor',
   ): boolean {
     // El evento se arma mutable a propósito: `cancel()` marca la bandera y el
     // emisor lee el resultado de forma sincrónica cuando vuelve. Es el único
@@ -495,6 +566,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     // perdería el receptor, y el veto se descartaría en silencio.
     let canceled = false
     const event: BeforeEditEvent<TRow> = {
+      source,
       row,
       rowIndex: position.rowIndex,
       column,
@@ -553,14 +625,63 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     if (context.column.editable !== true) return false
 
     if (!runBeforeEdit(position, context.row, context.column, context.value)) return false
+    if (
+      rejectionOf(position, context.row, context.column, context.value, newValue, 'editor') !== null
+    ) {
+      return false
+    }
 
     publishResult(position, context.row, context.column, context.value, newValue)
     return true
   }
 
-  function commit(): void {
+  function prepareChange(
+    position: CellPosition,
+    source: EditSource,
+    nextValue: (type: CellEditorType, current: CellValue) => ParsedCellValue,
+  ): EditCommitEvent<TRow> | null {
+    const context = resolveContext(position)
+    if (!context || context.column.editable !== true) return null
+
+    const newValue = nextValue(inferEditorType(context.column, context.value), context.value)
+    // Un texto que no se pudo leer —letras en un número, una opción que no
+    // existe— se anuncia como cualquier rechazo, y la celda queda afuera.
+    if (newValue === REJECTED_VALUE) {
+      if (!runBeforeEdit(position, context.row, context.column, context.value, source)) return null
+      options.emitInvalid?.({
+        source,
+        row: context.row,
+        rowIndex: position.rowIndex,
+        column: context.column,
+        columnKey: position.columnKey,
+        value: context.value,
+        message: options.invalidMessage?.() ?? 'Invalid value',
+      })
+      return null
+    }
+    // Una celda que ya tiene ese valor no es un cambio, y no merece ni el veto:
+    // preguntarle a `beforeEdit` por algo que no va a pasar solo haría ruido.
+    if (cellValuesEqual(context.value, newValue)) return null
+    if (!runBeforeEdit(position, context.row, context.column, context.value, source)) return null
+    if (
+      rejectionOf(position, context.row, context.column, context.value, newValue, source) !== null
+    ) {
+      return null
+    }
+
+    return {
+      row: context.row,
+      rowIndex: position.rowIndex,
+      column: context.column,
+      columnKey: position.columnKey,
+      oldValue: context.value,
+      newValue,
+    }
+  }
+
+  function commit(explicit = false): boolean {
     const position = editing.value
-    if (!position || closing) return
+    if (!position || closing) return true
 
     const control = activeControl
     const type = activeType
@@ -571,13 +692,329 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     // devolvería una cadena vacía y `undefined`.
     const rawText = control ? control.value : ''
     const oldValue = originalValue
-    close()
 
-    if (!context || !type) return
+    if (!context || !type) {
+      close()
+      return true
+    }
 
     const newValue = control ? fromControlValue(type, rawText, oldValue, context.column) : oldValue
+    const message = rejectionOf(position, context.row, context.column, oldValue, newValue, 'editor')
+    if (message !== null) {
+      // Con `Enter` el usuario sigue ahí para corregirlo. Saliendo de la celda ya
+      // no: se descarta, como un `Escape`, en lugar de publicar un valor que la
+      // regla rechaza o de retener el editor en una celda que el usuario dejó.
+      if (explicit) {
+        showError(message)
+        return false
+      }
+      cancelEdit()
+      return true
+    }
 
+    close()
     publishResult(position, context.row, context.column, oldValue, newValue)
+    return true
+  }
+
+  /**
+   * El mensaje de rechazo de un valor nuevo, o `null` si pasa.
+   *
+   * Un valor igual al anterior no se valida: no es un cambio, y un dato que ya
+   * estaba mal cargado no tiene por qué dejar al usuario atrapado en la celda.
+   * Cada rechazo se anuncia con `editInvalid`.
+   */
+  function rejectionOf(
+    position: CellPosition,
+    row: TRow,
+    column: DataTableColumn<TRow>,
+    oldValue: CellValue,
+    newValue: CellValue,
+    source: EditSource,
+  ): string | null {
+    if (cellValuesEqual(oldValue, newValue)) return null
+    const message = options.validate?.(position, row, column, newValue) ?? null
+    if (message === null) return null
+    options.emitInvalid?.({
+      source,
+      row,
+      rowIndex: position.rowIndex,
+      column,
+      columnKey: position.columnKey,
+      value: newValue,
+      message,
+    })
+    return message
+  }
+
+  /**
+   * Muestra el error sobre el editor abierto.
+   *
+   * Con un control incluido, el globo va pegado debajo de la celda y el control
+   * se marca con `aria-invalid` y con `aria-describedby` apuntando al globo, que
+   * además es `role="alert"`: un lector de pantalla lo anuncia en el momento.
+   */
+  function showError(message: string): void {
+    error.value = message
+    const control = activeControl
+    if (!control) return
+
+    const element = ensureErrorElement()
+    if (!element) return
+    element.textContent = message
+    element.hidden = false
+    control.classList.add('dt-editor--invalid')
+    control.setAttribute('aria-invalid', 'true')
+    control.setAttribute('aria-describedby', element.id)
+    positionError()
+  }
+
+  function hideError(): void {
+    error.value = null
+    if (errorElement) {
+      errorElement.hidden = true
+      errorElement.textContent = ''
+    }
+    for (const control of controls.values()) {
+      control.classList.remove('dt-editor--invalid')
+      control.removeAttribute('aria-invalid')
+      control.removeAttribute('aria-describedby')
+    }
+  }
+
+  function ensureErrorElement(): HTMLElement | null {
+    if (errorElement) return errorElement
+    const host = options.host.value
+    if (!host) return null
+    const element = document.createElement('div')
+    element.className = 'dt-editor-error'
+    element.id = `dt-editor-error-${Math.random().toString(36).slice(2, 10)}`
+    element.setAttribute('role', 'alert')
+    element.hidden = true
+    host.appendChild(element)
+    errorElement = element
+    return element
+  }
+
+  /** Ubica el globo pegado debajo de la celda en edición. */
+  function positionError(): void {
+    const element = errorElement
+    const geometry = appliedGeometry
+    if (!element || element.hidden || !geometry) return
+    // Con el panel de listas abierto, el mensaje va debajo del panel: los dos
+    // cuelgan de la misma celda y uno taparía al otro.
+    const below = tagsPickerOpen() && tagsPicker ? tagsPicker.offsetHeight : 0
+    element.style.transform = `translate3d(${geometry.x}px, ${geometry.y + geometry.height + below}px, 0)`
+    element.style.minWidth = `${geometry.width}px`
+  }
+
+  /* --------------------------------------------------- Editor de listas */
+
+  /**
+   * La lista de casillas del editor `tags`, creada la primera vez que hace falta.
+   *
+   * No es un control aparte: el control es el `<input>` de texto, donde la lista
+   * se escribe separada por comas, y este panel es una forma de escribirla sin
+   * teclear. Por eso el foco nunca sale del input —el panel no toma foco y un
+   * clic sobre él no se lo quita— y el input hace de `combobox`: las flechas
+   * recorren las opciones con `aria-activedescendant`, y un lector de pantalla
+   * anuncia la opción activa sin que el foco se mueva.
+   *
+   * Solo aparece si la columna declara `options`. Sin ellas no hay nada que
+   * ofrecer, y el input solo alcanza.
+   */
+  let tagsPicker: HTMLElement | null = null
+  /** Las opciones con las que se armó el panel: se rehace solo si cambian. */
+  let tagsPickerOptions: readonly CellOption[] | null = null
+  /** Índice de la opción activa, o `-1` si ninguna. */
+  let tagsActive = -1
+
+  function ensureTagsPicker(): HTMLElement | null {
+    if (tagsPicker) return tagsPicker
+    const host = options.host.value
+    if (!host) return null
+    const picker = document.createElement('div')
+    picker.className = 'dt-tags-picker'
+    picker.id = `dt-tags-picker-${Math.random().toString(36).slice(2, 10)}`
+    picker.setAttribute('role', 'listbox')
+    picker.setAttribute('aria-multiselectable', 'true')
+    picker.hidden = true
+    picker.addEventListener('mousedown', handlePickerMouseDown)
+    host.appendChild(picker)
+    tagsPicker = picker
+    return picker
+  }
+
+  /** Abre el panel bajo el input, con las casillas de lo que ya tiene la celda. */
+  function openTagsPicker(control: HTMLInputElement, column: DataTableColumn<TRow>): void {
+    const choices = column.options ?? []
+    if (choices.length === 0) {
+      hideTagsPicker()
+      return
+    }
+    const picker = ensureTagsPicker()
+    if (!picker) return
+
+    if (tagsPickerOptions !== choices) {
+      tagsPickerOptions = choices
+      picker.textContent = ''
+      choices.forEach((choice, index) => {
+        const item = document.createElement('div')
+        item.className = 'dt-tags-option'
+        item.id = `${picker.id}-${index}`
+        item.setAttribute('role', 'option')
+        const check = document.createElement('span')
+        check.className = 'dt-tags-check'
+        check.setAttribute('aria-hidden', 'true')
+        const label = document.createElement('span')
+        label.textContent = choice.label
+        item.append(check, label)
+        picker.appendChild(item)
+      })
+    }
+
+    tagsActive = -1
+    picker.hidden = false
+    control.setAttribute('role', 'combobox')
+    control.setAttribute('aria-expanded', 'true')
+    control.setAttribute('aria-controls', picker.id)
+    syncTagsPicker()
+    positionTagsPicker()
+  }
+
+  function hideTagsPicker(): void {
+    tagsActive = -1
+    if (tagsPicker) tagsPicker.hidden = true
+    const control = controls.get('tags')
+    if (!control) return
+    for (const attribute of ['role', 'aria-expanded', 'aria-controls', 'aria-activedescendant']) {
+      control.removeAttribute(attribute)
+    }
+  }
+
+  function tagsPickerOpen(): boolean {
+    return activeType === 'tags' && tagsPicker !== null && !tagsPicker.hidden
+  }
+
+  /** Marca las casillas según lo que dice el input, y la opción activa. */
+  function syncTagsPicker(): void {
+    const picker = tagsPicker
+    const control = activeControl
+    const choices = tagsPickerOptions
+    if (!picker || !control || !choices || picker.hidden) return
+
+    const chosen = new Set(parseTagsText(control.value, originalValue, choices))
+    choices.forEach((choice, index) => {
+      const item = picker.children[index]
+      if (!(item instanceof HTMLElement)) return
+      const selected = typeof choice.value !== 'boolean' && chosen.has(choice.value)
+      item.setAttribute('aria-selected', selected ? 'true' : 'false')
+      item.classList.toggle('dt-tags-option--active', index === tagsActive)
+    })
+
+    const active = picker.children[tagsActive]
+    if (active instanceof HTMLElement) {
+      control.setAttribute('aria-activedescendant', active.id)
+      // A mano y no con `scrollIntoView`, que desplaza TODOS los ancestros con
+      // scroll: movería la tabla, y si la fila en edición saliera de la ventana el
+      // editor se cerraría solo en medio de la elección.
+      const top = active.offsetTop
+      const bottom = top + active.offsetHeight
+      if (top < picker.scrollTop) picker.scrollTop = top
+      else if (bottom > picker.scrollTop + picker.clientHeight) {
+        picker.scrollTop = bottom - picker.clientHeight
+      }
+    } else {
+      control.removeAttribute('aria-activedescendant')
+    }
+  }
+
+  /** Marca o desmarca una opción reescribiendo el texto del input. */
+  function toggleTag(index: number): void {
+    const control = activeControl
+    const choices = tagsPickerOptions
+    const choice = choices?.[index]
+    if (!control || !choices || !choice || typeof choice.value === 'boolean') return
+
+    const current = parseTagsText(control.value, originalValue, choices)
+    const next = current.includes(choice.value)
+      ? current.filter((item) => item !== choice.value)
+      : [...current, choice.value]
+    control.value = tagsToText(next, choices)
+    tagsActive = index
+    if (error.value !== null) hideError()
+    syncTagsPicker()
+  }
+
+  /**
+   * Un clic sobre el panel marca la opción y NO le quita el foco al input: sin el
+   * `preventDefault`, el `mousedown` movería el foco, el `blur` confirmaría la
+   * edición y el panel se cerraría antes de que el clic llegara.
+   */
+  function handlePickerMouseDown(event: MouseEvent): void {
+    event.preventDefault()
+    const target = event.target
+    const item = target instanceof Element ? target.closest('.dt-tags-option') : null
+    if (!item || !tagsPicker) return
+    toggleTag(Array.prototype.indexOf.call(tagsPicker.children, item))
+  }
+
+  /**
+   * Las teclas del panel, antes que las del editor. Devuelve si la tecla fue
+   * suya. `↓` y `↑` recorren las opciones y `Espacio` marca la activa, como en
+   * cualquier lista de casillas. `Enter` NO es del panel: confirma siempre, así
+   * que nunca queda atrapado adentro. Sin opción activa, el espacio es un
+   * carácter más del texto.
+   */
+  function handleTagsKey(event: KeyboardEvent): boolean {
+    const count = tagsPickerOptions?.length ?? 0
+    if (count === 0) return false
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      tagsActive = tagsActive < 0 ? (step > 0 ? 0 : count - 1) : (tagsActive + step + count) % count
+      syncTagsPicker()
+      return true
+    }
+    if (event.key === ' ' && tagsActive >= 0) {
+      toggleTag(tagsActive)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * El panel va pegado debajo de la celda, del ancho de la celda como mínimo.
+   *
+   * Si abajo no entra —la celda está en las últimas filas visibles—, va arriba:
+   * el viewport recorta lo que se sale, y un panel cortado esconde justo las
+   * opciones que faltan. Solo mientras el panel está abierto se lee layout.
+   */
+  function positionTagsPicker(): void {
+    const picker = tagsPicker
+    const geometry = appliedGeometry
+    if (!picker || picker.hidden || !geometry) return
+    picker.style.transform = `translate3d(${geometry.x}px, ${geometry.y + geometry.height}px, 0)`
+    picker.style.minWidth = `${geometry.width}px`
+
+    const viewport = picker.closest('.dt-viewport')
+    if (!viewport) return
+    const overflows =
+      picker.getBoundingClientRect().bottom > viewport.getBoundingClientRect().bottom
+    const above = geometry.y - picker.offsetHeight
+    if (overflows && above >= 0) {
+      picker.style.transform = `translate3d(${geometry.x}px, ${above}px, 0)`
+    }
+  }
+
+  /** Escribir de nuevo borra el error: el usuario ya está corrigiéndolo. */
+  function handleInput(): void {
+    if (error.value !== null) hideError()
+    // Escribir vuelve al texto: la opción activa se suelta, y el espacio que
+    // sigue vuelve a ser un espacio.
+    if (tagsPickerOpen()) {
+      tagsActive = -1
+      syncTagsPicker()
+    }
   }
 
   function commitSlotValue(newValue: CellValue): void {
@@ -594,6 +1031,22 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     // Igual que en `commit`: el valor original se captura antes de que `close()`
     // lo descarte.
     const oldValue = originalValue
+    // El `commit` del slot es siempre explícito —el consumidor lo llama cuando el
+    // usuario eligió—, así que un rechazo deja el editor abierto, con `error`.
+    if (context) {
+      const message = rejectionOf(
+        position,
+        context.row,
+        context.column,
+        oldValue,
+        newValue,
+        'editor',
+      )
+      if (message !== null) {
+        error.value = message
+        return
+      }
+    }
     close()
 
     if (!context) return
@@ -705,6 +1158,8 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
         focused.blur()
       }
     }
+    hideError()
+    hideTagsPicker()
     editing.value = null
     activeControl = null
     activeSlot = null
@@ -740,6 +1195,8 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     element.style.transform = `translate3d(${geometry.x}px, ${geometry.y}px, 0)`
     element.style.width = `${geometry.width}px`
     element.style.height = `${geometry.height}px`
+    positionTagsPicker()
+    positionError()
   }
 
   function syncPosition(): void {
@@ -764,6 +1221,12 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
   function handleKeyDown(event: Event): void {
     if (!(event instanceof KeyboardEvent)) return
 
+    if (tagsPickerOpen() && handleTagsKey(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+
     // Enter y Escape detienen la propagación además de prevenir el default: si
     // burbujearan hasta el viewport, su manejador los volvería a interpretar
     // —Enter como "abrir editor" sobre la celda que se acaba de cerrar— y la
@@ -771,8 +1234,8 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     if (event.key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
-      commit()
-      options.onEnterCommit?.()
+      // Un valor rechazado deja el editor abierto: no se baja de fila.
+      if (commit(true)) options.onEnterCommit?.()
       return
     }
     if (event.key === 'Escape') {
@@ -801,19 +1264,26 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
   }
 
   function handleSelectChange(): void {
-    commit()
+    commit(true)
   }
 
   function dispose(): void {
     for (const control of controls.values()) {
       control.removeEventListener('keydown', handleKeyDown)
       control.removeEventListener('blur', handleBlur)
+      control.removeEventListener('input', handleInput)
       if (control instanceof HTMLSelectElement) {
         control.removeEventListener('change', handleSelectChange)
       }
       control.remove()
     }
     controls.clear()
+    errorElement?.remove()
+    errorElement = null
+    tagsPicker?.removeEventListener('mousedown', handlePickerMouseDown)
+    tagsPicker?.remove()
+    tagsPicker = null
+    tagsPickerOptions = null
     activeControl = null
     activeSlot = null
     activeType = null
@@ -826,6 +1296,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
 
   return {
     editing,
+    error,
     beginEdit,
     commitValue,
     commit,
@@ -834,6 +1305,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     cancelEdit,
     syncPosition,
     resolveEditorType,
+    prepareChange,
     dispose,
   }
 }

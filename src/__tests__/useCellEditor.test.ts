@@ -71,7 +71,7 @@ function makeRows(): Row[] {
 }
 
 interface EditorHarness {
-  editor: UseCellEditorReturn
+  editor: UseCellEditorReturn<Row>
   rows: Row[]
   before: BeforeEditEvent<Row>[]
   after: AfterEditEvent<Row>[]
@@ -94,7 +94,7 @@ function mountEditor(): EditorHarness {
   const veto: EditorHarness['veto'] = { handler: null }
   const painted = { value: true }
   const enter = { count: 0 }
-  const holder: { value: UseCellEditorReturn | null } = { value: null }
+  const holder: { value: UseCellEditorReturn<Row> | null } = { value: null }
   const host = shallowRef<HTMLElement | null>(null)
 
   const wrapper = mount(

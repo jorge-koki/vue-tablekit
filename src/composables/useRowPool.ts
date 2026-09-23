@@ -210,6 +210,8 @@ export interface RowPoolCallbacks {
    * decidir cuál es en dos lugares: aquí y del otro lado.
    */
   onCellShiftPointerDown?: (position: CellPosition) => void
+  /** Igual, pero con `Ctrl` o `Cmd`: SUMA un rango en vez de reemplazar la selección. */
+  onCellCtrlPointerDown?: (position: CellPosition) => void
   /**
    * El puntero pasó por una celda con el botón primario presionado.
    *
@@ -218,6 +220,18 @@ export interface RowPoolCallbacks {
    * mover el mouse sobre la tabla no cuesta absolutamente nada.
    */
   onCellDragOver?: (position: CellPosition) => void
+  /**
+   * El puntero se movió durante un arrastre de selección, esté donde esté.
+   *
+   * Llega con cada movimiento, en coordenadas de pantalla, también fuera de la
+   * tabla, donde {@link RowPoolCallbacks.onCellDragOver} no tiene celda que
+   * anunciar. `overCell` dice si debajo había una celda de datos. Es lo que
+   * alimenta el auto-scroll: el pool no sabe nada de scroll, solo reporta dónde
+   * está la mano.
+   */
+  onDragMove?: (clientX: number, clientY: number, overCell: boolean) => void
+  /** Terminó el arrastre de selección: se soltó el botón, se canceló o se desmontó. */
+  onDragEnd?: () => void
   /**
    * El usuario presionó sobre el número de una fila, en la regleta.
    *
@@ -333,6 +347,17 @@ export interface RowPoolPaintState<TRow> {
    * una comparación de enteros y no una búsqueda de clave.
    */
   range?: RangeRect | null
+  /**
+   * Los rectángulos sumados con `Ctrl`+clic, además de `range`. Se tiñen
+   * enteros: la celda activa vive en el rango que se está extendiendo, no en
+   * estos.
+   */
+  extraRanges?: readonly RangeRect[]
+  /**
+   * Cuántas filas de encabezado hay: 1, o 2 con grupos de columnas. Corre
+   * `aria-rowindex` de cada fila de datos. Ausente vale 1.
+   */
+  headerRows?: number
   /** Modo de selección vigente. Decide dónde se anuncia `aria-selected`. */
   selectionMode: SelectionMode
   /** Si hay que alternar el fondo de las filas impares. */
@@ -363,6 +388,8 @@ interface PaintFrame {
   cellSelectionActive: boolean
   /** Rectángulo seleccionado, o `null`. Ver {@link RowPoolPaintState.range}. */
   range: RangeRect | null
+  /** Ver {@link RowPoolPaintState.extraRanges}. Vacío en el caso normal. */
+  extraRanges: readonly RangeRect[]
   /** Ancho total de la tabla. Ver {@link RowPoolPaintState.totalWidth}. */
   totalWidth: number
   /**
@@ -420,6 +447,28 @@ export interface RowPool<TRow> {
   invalidate(): void
   /** Nodo DOM de una celda pintada, o `null` si esa celda no está en la ventana. */
   getCellElement(rowIndex: number, columnKey: string): HTMLElement | null
+}
+
+/** El vacío de `extraRanges`, compartido para no crear un array por frame. */
+const NO_RANGES: readonly RangeRect[] = []
+
+/** Si una celda cae dentro de alguno de los rangos sumados con `Ctrl`+clic. */
+function cellIsInExtraRange(
+  ranges: readonly RangeRect[],
+  rowIndex: number,
+  columnIndex: number,
+): boolean {
+  for (const range of ranges) {
+    if (
+      rowIndex >= range.rowStart &&
+      rowIndex <= range.rowEnd &&
+      columnIndex >= range.columnStart &&
+      columnIndex <= range.columnEnd
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -669,8 +718,15 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     return offset < count ? start + offset : -1
   }
 
+  /**
+   * Filas de encabezado del frame en curso: 1, o 2 con grupos de columnas. Corre
+   * el `aria-rowindex` de cada fila de datos.
+   */
+  let headerRows = 1
+
   function paint(state: RowPoolPaintState<TRow>): void {
     if (!container) return
+    headerRows = state.headerRows ?? 1
 
     const { rowRange, columns, rowMetrics, editing, active, selectionMode, stripe, totalWidth } =
       state
@@ -742,6 +798,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
       // debe anunciarse como seleccionada ni pintar su anillo.
       cellSelectionActive: selectionMode === 'cell',
       range: selectionMode === 'cell' ? (state.range ?? null) : null,
+      extraRanges: selectionMode === 'cell' ? (state.extraRanges ?? NO_RANGES) : NO_RANGES,
       totalWidth: state.totalWidth,
       pinnedStartCount,
     }
@@ -797,7 +854,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
             '',
             false,
             rowIndex === activeRowIndex,
-            rowIsInRange(frame.range, rowIndex),
+            rowIsInAnyRange(frame, rowIndex),
           )
           continue
         }
@@ -841,7 +898,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
         rowNode.__dtRowIndex = rowIndex
         rowNode.__dtSourceRowIndex = sourceRowIndex
         setRowKey(rowNode, state.resolveRowKey(row, sourceRowIndex))
-        setRowAriaIndex(rowNode, rowIndex)
+        setRowAriaIndex(rowNode, rowIndex, headerRows)
       }
 
       // Las filas de datos de un `treegrid` cuelgan un nivel por debajo del
@@ -861,7 +918,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
         String(rowIndex + 1),
         striped,
         rowIsActive,
-        rowIsInRange(frame.range, rowIndex),
+        rowIsInAnyRange(frame, rowIndex),
       )
       // En modo `row` la fila es la unidad seleccionada y lo anuncia; en modo
       // `cell` lo anuncia la celda, y marcar además la fila duplicaría el
@@ -970,7 +1027,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
       rowNode.__dtRowIndex = rowIndex
       rowNode.__dtSourceRowIndex = rowIndex
       setRowKey(rowNode, '')
-      setRowAriaIndex(rowNode, rowIndex)
+      setRowAriaIndex(rowNode, rowIndex, headerRows)
     }
 
     // El número SÍ se sabe: es la posición, no el dato.
@@ -1135,6 +1192,13 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     return range !== null && rowIndex >= range.rowStart && rowIndex <= range.rowEnd
   }
 
+  /** Lo mismo, contra el rango vigente y los sumados con `Ctrl`+clic. */
+  function rowIsInAnyRange(frame: PaintFrame, rowIndex: number): boolean {
+    if (rowIsInRange(frame.range, rowIndex)) return true
+    for (const extra of frame.extraRanges) if (rowIsInRange(extra, rowIndex)) return true
+    return false
+  }
+
   /**
    * Garantiza que el nodo de fila esté construido para el tipo que le toca.
    *
@@ -1262,7 +1326,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
       rowNode.__dtRowIndex = rowIndex
       rowNode.__dtGroupId = entry.groupId
       setRowKey(rowNode, entry.groupId)
-      setRowAriaIndex(rowNode, rowIndex)
+      setRowAriaIndex(rowNode, rowIndex, headerRows)
     }
 
     setRowActive(rowNode, rowIndex === frame.activeRowIndex)
@@ -1413,12 +1477,13 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     // ninguno de los dos.
     const range = frame.range
     const inRange =
-      range !== null &&
-      !isActive &&
-      rowIndex >= range.rowStart &&
-      rowIndex <= range.rowEnd &&
-      resolved.index >= range.columnStart &&
-      resolved.index <= range.columnEnd
+      (range !== null &&
+        !isActive &&
+        rowIndex >= range.rowStart &&
+        rowIndex <= range.rowEnd &&
+        resolved.index >= range.columnStart &&
+        resolved.index <= range.columnEnd) ||
+      cellIsInExtraRange(frame.extraRanges, rowIndex, resolved.index)
 
     const identityChanged =
       rendererChanged ||
@@ -1666,6 +1731,15 @@ export function useRowPool<TRow extends Record<string, unknown>>(
       return
     }
 
+    // `Ctrl` —o `Cmd`, que es el modificador de la misma idea en un Mac— suma un
+    // rango en lugar de reemplazar la selección. Sí arma el arrastre: el rango
+    // nuevo se extiende arrastrando, igual que el primero.
+    if ((mouse?.ctrlKey || mouse?.metaKey) && callbacks.onCellCtrlPointerDown) {
+      callbacks.onCellCtrlPointerDown(position)
+      beginDrag()
+      return
+    }
+
     callbacks.onCellPointerDown?.(position)
     beginDrag()
   }
@@ -1734,6 +1808,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     doc.removeEventListener('pointermove', handleDragMove)
     doc.removeEventListener('pointerup', endDrag)
     doc.removeEventListener('pointercancel', endDrag)
+    callbacks.onDragEnd?.()
   }
 
   function handleDragMove(event: Event): void {
@@ -1746,7 +1821,9 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     }
 
     const hit = resolveEventCell(event.target)
-    if (!hit || hit.row.__dtRowIndex === UNPAINTED_ROW_INDEX) return
+    const overCell = hit !== null && hit.row.__dtRowIndex !== UNPAINTED_ROW_INDEX
+    if (event instanceof MouseEvent) callbacks.onDragMove?.(event.clientX, event.clientY, overCell)
+    if (!hit || !overCell) return
 
     callbacks.onCellDragOver?.({
       rowIndex: hit.row.__dtRowIndex,

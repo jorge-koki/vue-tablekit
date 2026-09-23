@@ -27,11 +27,13 @@ import type {
   BeforeEditEvent,
   CellEditorSlotProps,
   CellPosition,
+  CellsCommitEvent,
   ColumnResizeEvent,
   DataTableColumn,
   DataTableInstance,
   DataTableProps,
   EditCommitEvent,
+  EditInvalidEvent,
   FlatRow,
   RangeCopyEvent,
   RangeSelectEvent,
@@ -398,6 +400,13 @@ export interface TableHarness {
    * abierto y el copiado es del `<input>`.
    */
   copy(): Promise<string | null>
+  /**
+   * Dispara un `paste` sobre el viewport con `text` en el portapapeles.
+   *
+   * Devuelve si la tabla tomó el pegado —si canceló el evento—. `false` es que lo
+   * dejó pasar: con el editor abierto, el pegado es del `<input>`.
+   */
+  paste(text: string): Promise<boolean>
   /** Control de edición visible, o `null`. */
   editor(): HTMLInputElement | HTMLSelectElement | null
   /**
@@ -447,7 +456,16 @@ function headerHeightOf(props: TableProps | undefined): number {
       : props?.dense
         ? DENSE_HEADER_HEIGHT
         : DEFAULT_HEADER_HEIGHT
-  return base * normalizeZoom(props?.zoom)
+  // Con columnas agrupadas el encabezado suma la fila de grupos, que por defecto
+  // mide lo mismo que la de títulos.
+  const grouped = props?.columns?.some((column) => Boolean(column.headerGroup)) ?? false
+  const groupDeclared = props?.headerGroupHeight
+  const groupRow = !grouped
+    ? 0
+    : typeof groupDeclared === 'number' && Number.isFinite(groupDeclared) && groupDeclared > 0
+      ? groupDeclared
+      : base
+  return (base + groupRow) * normalizeZoom(props?.zoom)
 }
 
 /**
@@ -498,6 +516,8 @@ export interface TableListeners {
   onColumnResize?: (event: ColumnResizeEvent) => void
   onRangeSelect?: (event: RangeSelectEvent<GridRow>) => void
   onRangeCopy?: (event: RangeCopyEvent) => void
+  onCellsCommit?: (event: CellsCommitEvent<GridRow>) => void
+  onEditInvalid?: (event: EditInvalidEvent<GridRow>) => void
 }
 
 /**
@@ -563,6 +583,16 @@ function imperativeApi(wrapper: VueWrapper): DataTableInstance {
     }
     method.call(instance, ...args)
   }
+  // Igual que `call`, para los métodos que responden un booleano.
+  const ask = (name: keyof DataTableInstance): boolean => {
+    const method: unknown = Reflect.get(instance, name)
+    if (typeof method !== 'function') {
+      throw new Error(`[harness] el componente no expuso "${name}"`)
+    }
+    const answer: unknown = method.call(instance)
+    if (typeof answer !== 'boolean') throw new Error(`[harness] "${name}" no respondió un booleano`)
+    return answer
+  }
 
   return {
     scrollToRow: (index) => call('scrollToRow', index),
@@ -579,6 +609,11 @@ function imperativeApi(wrapper: VueWrapper): DataTableInstance {
     collapseAllGroups: () => call('collapseAllGroups'),
     enterFullscreen: () => call('enterFullscreen'),
     exitFullscreen: () => call('exitFullscreen'),
+    undo: () => call('undo'),
+    redo: () => call('redo'),
+    canUndo: () => ask('canUndo'),
+    canRedo: () => ask('canRedo'),
+    clearHistory: () => call('clearHistory'),
   }
 }
 
@@ -712,7 +747,20 @@ export async function mountTable(options: MountTableOptions): Promise<TableHarne
         last = cellByPosition(canvas, rowIndex, columnKey)
         // `buttons: 1` dice que el botón sigue presionado. Con cero, el pool da el
         // arrastre por terminado, que es justamente lo que tiene que hacer.
-        last.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, buttons: 1 }))
+        //
+        // La celda la decide el `target`, no las coordenadas: sin layout no hay
+        // cómo saber dónde está cada una. Las coordenadas van al centro del
+        // cuerpo, lejos de todo borde, porque son lo único que mira el
+        // auto-scroll, y un arrastre DENTRO de la tabla no tiene que dispararlo.
+        // Sin ellas el evento diría (0, 0): la esquina, que es un borde.
+        last.dispatchEvent(
+          new MouseEvent('pointermove', {
+            bubbles: true,
+            buttons: 1,
+            clientX: size.width / 2,
+            clientY: size.height / 2,
+          }),
+        )
         await harness.flush()
       }
 
@@ -742,6 +790,23 @@ export async function mountTable(options: MountTableOptions): Promise<TableHarne
       viewport.dispatchEvent(event)
       await harness.flush()
       return written
+    },
+
+    async paste(text: string): Promise<boolean> {
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      // Igual que en `copy`: un `DataTransfer` mínimo, con lo único que el
+      // componente lee.
+      Object.defineProperty(event, 'clipboardData', {
+        value: {
+          getData(format: string): string {
+            return format === 'text/plain' ? text : ''
+          },
+        },
+      })
+
+      viewport.dispatchEvent(event)
+      await harness.flush()
+      return event.defaultPrevented
     },
 
     editor(): HTMLInputElement | HTMLSelectElement | null {

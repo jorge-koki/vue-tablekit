@@ -70,6 +70,9 @@ export function groupValueKey(value: CellValue): string {
   }
   if (typeof value === 'number') return `#${value}`
   if (typeof value === 'boolean') return `?${value}`
+  // Una lista agrupa por su texto unido con comas, que es lo que producía antes
+  // de que `CellValue` admitiera listas: los ids guardados siguen valiendo.
+  if (typeof value !== 'string') return value.join(',')
   return value
 }
 

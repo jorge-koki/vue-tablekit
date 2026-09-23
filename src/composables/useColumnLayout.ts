@@ -547,7 +547,23 @@ export function useColumnLayout<TRow>(
  * navegador.
  */
 function clampColumnWidth<TRow>(width: number, column: DataTableColumn<TRow>): number {
+  const { min, max } = columnWidthBounds(column)
+  return clamp(width, min, max)
+}
+
+/**
+ * Los límites efectivos del ancho de una columna, en px base.
+ *
+ * Es la misma cuenta que usa el acotado, expuesta aparte para quien necesita los
+ * extremos sin proponer un ancho: el modo ancho del teclado los anuncia en
+ * `aria-valuemin` / `aria-valuemax` y salta a ellos con `Inicio` y `Fin`. `max`
+ * nunca queda por debajo de `min`, aunque la columna los declare cruzados.
+ */
+export function columnWidthBounds<TRow>(column: DataTableColumn<TRow>): {
+  min: number
+  max: number
+} {
   const min = Math.max(MIN_COLUMN_WIDTH, column.minWidth ?? MIN_COLUMN_WIDTH)
   const max = Math.min(MAX_COLUMN_WIDTH, column.maxWidth ?? MAX_COLUMN_WIDTH)
-  return clamp(width, min, Math.max(min, max))
+  return { min, max: Math.max(min, max) }
 }

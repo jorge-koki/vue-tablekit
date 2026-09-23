@@ -117,7 +117,7 @@ function warnUnknownRenderer(name: string): void {
       `Si es un error de tipeo, corregir el nombre comparándolo con esa lista. ` +
       `Si es un renderer propio, registrarlo antes de montar la tabla con ` +
       `\`registerRenderer('${name}', () => miRenderer)\`, o pasar la instancia ` +
-      `directamente en \`column.renderer\`. Ver "Escribir un renderer propio" en el README.`,
+      `directamente en \`column.renderer\`. Ver "Renderer propio" en el README.`,
   )
 }
 

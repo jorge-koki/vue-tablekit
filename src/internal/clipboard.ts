@@ -118,3 +118,68 @@ export function buildRangeText<TRow extends Record<string, unknown>>(
 
   return { text: lines.join('\n'), rowCount: lines.length }
 }
+
+/**
+ * Parte el texto del portapapeles en filas y celdas: la inversa de
+ * {@link buildRangeText}.
+ *
+ * Entiende lo que escribe cualquier hoja de cálculo, que es lo mismo que escribe
+ * el copiado de esta tabla: tabuladores entre celdas, saltos de línea entre
+ * filas —`\n` o `\r\n`— y comillas alrededor de un campo que lleva un tabulador,
+ * un salto o una comilla adentro, con la comilla duplicada para escaparla.
+ *
+ * El salto de línea final que deja Excel al copiar no produce una fila vacía:
+ * pegar tres filas tiene que escribir tres filas, no tres y una en blanco.
+ */
+export function parseClipboardText(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let quoted = false
+  let atFieldStart = true
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (quoted) {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
+          field += '"'
+          index += 1
+        } else {
+          quoted = false
+        }
+      } else {
+        field += char
+      }
+      continue
+    }
+    if (atFieldStart && char === '"') {
+      quoted = true
+      atFieldStart = false
+      continue
+    }
+    atFieldStart = false
+    if (char === '\t') {
+      row.push(field)
+      field = ''
+      atFieldStart = true
+      continue
+    }
+    if (char === '\r' || char === '\n') {
+      row.push(field)
+      rows.push(row)
+      row = []
+      field = ''
+      atFieldStart = true
+      if (char === '\r' && text[index + 1] === '\n') index += 1
+      continue
+    }
+    field += char
+  }
+
+  if (!(atFieldStart && field === '' && row.length === 0)) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows
+}

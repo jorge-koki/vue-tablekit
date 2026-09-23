@@ -4,19 +4,22 @@ import { computed, shallowRef, useTemplateRef, watch, watchEffect } from 'vue'
 // este repositorio el alias de Vite resuelve `vue-tablekit` a `src/index.ts`, de
 // modo que la demo compila contra la API pública y nada más: si algo no está
 // exportado desde el `index.ts`, esta pantalla no compila.
-import { countSelectedRows, DataTable, sortRows } from 'vue-tablekit'
+import { applyEdits, countSelectedRows, DataTable, sortRows } from 'vue-tablekit'
 import type {
   AfterEditEvent,
   BeforeEditEvent,
   CellPosition,
   CellSelectEvent,
+  CellsCommitEvent,
   CellValue,
+  ColumnResizeEvent,
   ColumnVisibilityState,
   DataTableInstance,
   DataTableRadius,
   DataTableTheme,
   DataTableVariant,
   EditCommitEvent,
+  EditInvalidEvent,
   GroupToggleEvent,
   RangeCopyEvent,
   RangeSelectEvent,
@@ -269,6 +272,23 @@ const rowSelection = shallowRef(false)
 
 /** Mover columnas arrastrando el encabezado. Encendido, igual que el componente. */
 const columnReorder = shallowRef(true)
+
+/** Doble clic sobre el borde de un encabezado para ajustar la columna. Encendido, igual que el componente. */
+const columnAutoFit = shallowRef(true)
+
+/**
+ * Los títulos de grupo sobre las columnas —Proyecto, Seguimiento, Plan—.
+ *
+ * Apagarlos no es una prop de la tabla: es quitarles `headerGroup` a las
+ * columnas, que es lo que haría una aplicación. Sin ningún `headerGroup` la fila
+ * de grupos no existe y el encabezado vuelve a medir una sola fila.
+ */
+const headerGroups = shallowRef(true)
+const tableColumns = computed(() =>
+  headerGroups.value
+    ? projectColumns
+    : projectColumns.map((column) => ({ ...column, headerGroup: undefined })),
+)
 const dense = shallowRef(false)
 
 /**
@@ -484,6 +504,17 @@ function onRangeSelect(event: RangeSelectEvent<ProjectRow>): void {
   }
 }
 
+/**
+ * Un ancho confirmado, por el mouse o por el modo ancho del teclado.
+ *
+ * Llega una vez por gesto y no una por píxel: es la diferencia con
+ * `update:columnWidths`, que sale en cada movimiento. Con el teclado, `Escape`
+ * no produce ninguna línea, porque deshacer no es redimensionar.
+ */
+function onColumnResize(event: ColumnResizeEvent): void {
+  logEvent('info', `${event.columnKey} · ${event.previousWidth}px → ${event.width}px`)
+}
+
 /** El usuario copió. El texto ya está en el portapapeles cuando esto llega. */
 function onRangeCopy(event: RangeCopyEvent): void {
   logEvent(
@@ -536,10 +567,6 @@ function describe(value: CellValue): string {
 }
 
 /**
- * Primer eslabón del ciclo. Es cancelable: llamar a `cancel()` impide que el
- * editor se abra, y entonces no hay `editCommit` ni `afterEdit`.
- */
-/**
  * Lo que se marcó, contado bien.
  *
  * El contador NO es `keys.length`: en modo `'all'` esa lista son las EXCLUIDAS,
@@ -553,13 +580,66 @@ function onRowSelectionChange(event: RowSelectionChangeEvent<ProjectRow>): void 
   else logEvent('selection', `${event.key} · ${total} marcada(s)`)
 }
 
+/**
+ * Primer eslabón del ciclo. Es cancelable: llamar a `cancel()` impide que el
+ * editor se abra, y entonces no hay `editCommit` ni `afterEdit`.
+ *
+ * Corre también celda por celda al vaciar, pegar y deshacer, así que el bloqueo
+ * de una fila vale por cualquier vía. Solo se anota en la bitácora el del editor:
+ * vaciar un rango de mil celdas llenaría la bitácora de líneas iguales.
+ */
 function onBeforeEdit(event: BeforeEditEvent<ProjectRow>): void {
   if (event.row.locked) {
     event.cancel()
-    logEvent('veto', `${event.row.id} está bloqueado · ${event.columnKey} no es editable`)
+    if (event.source === 'editor') {
+      logEvent('veto', `${event.row.id} está bloqueado · ${event.columnKey} no es editable`)
+    }
     return
   }
-  logEvent('before', `${event.row.id} · ${event.columnKey}`)
+  if (event.source === 'editor') logEvent('before', `${event.row.id} · ${event.columnKey}`)
+}
+
+/**
+ * El índice del array que se guarda, a partir del que reporta la tabla.
+ *
+ * La tabla reporta índices de `tableRows`, que es lo que recibe como `rows`. En
+ * memoria y con un orden aplicado eso es `sortedRows`: las mismas filas en otra
+ * permutación, así que el mismo número apunta a otra fila de `rows`. Sin
+ * ordenar, o en modo servidor —donde se escribe en `serverRows`, que es lo que
+ * recibe la tabla—, el número ya es el correcto.
+ */
+function toDatasetEdits<TChange extends { row: ProjectRow; rowIndex: number }>(
+  changes: readonly TChange[],
+): TChange[] {
+  if (dataSource.value === 'server' || sortedRows.value === rows.value) return changes.slice()
+  const indexOf = new Map(rows.value.map((row, index) => [row, index]))
+  const mapped: TChange[] = []
+  for (const change of changes) {
+    const rowIndex = indexOf.get(change.row)
+    if (rowIndex !== undefined) mapped.push({ ...change, rowIndex })
+  }
+  return mapped
+}
+
+/**
+ * Los cambios de varias celdas a la vez: vaciar, pegar, deshacer y rehacer.
+ *
+ * Llega UNA vez por gesto, con todos los cambios. `applyEdits` los aplica con una
+ * sola copia del array, que es lo que hace viable vaciar una columna entera de
+ * cincuenta mil filas.
+ */
+function onCellsCommit(event: CellsCommitEvent<ProjectRow>): void {
+  const changes = toDatasetEdits(event.changes)
+  if (dataSource.value === 'server') serverRows.value = applyEdits(serverRows.value, changes)
+  else rows.value = applyEdits(rows.value, changes)
+
+  const gesture = {
+    clear: 'vaciado',
+    paste: 'pegado',
+    undo: 'deshecho',
+    redo: 'rehecho',
+  }[event.source]
+  logEvent('commit', `${gesture} · ${event.changes.length} celda(s)`)
 }
 
 /**
@@ -575,17 +655,19 @@ function onBeforeEdit(event: BeforeEditEvent<ProjectRow>): void {
  * escribiría la edición sobre otra fila del dataset.
  */
 function onEditCommit(event: EditCommitEvent<ProjectRow>): void {
+  const [change] = toDatasetEdits([event])
+  if (!change) return
   const updated = { ...event.row, [event.columnKey]: event.newValue }
 
   // `event.rowIndex` es el índice del DATASET, y en modo servidor eso es un
   // índice dentro del array disperso: el mismo número sirve para los dos lados.
   if (dataSource.value === 'server') {
     const next = serverRows.value.slice()
-    next[event.rowIndex] = updated
+    next[change.rowIndex] = updated
     serverRows.value = next
   } else {
     const next = rows.value.slice()
-    next[event.rowIndex] = updated
+    next[change.rowIndex] = updated
     rows.value = next
   }
 
@@ -593,6 +675,11 @@ function onEditCommit(event: EditCommitEvent<ProjectRow>): void {
     'commit',
     `${event.row.id} · ${event.columnKey}: ${describe(event.oldValue)} → ${describe(event.newValue)}`,
   )
+}
+
+/** Un valor que `column.validate` rechazó, por cualquier vía. Es un aviso: el rechazo ya ocurrió. */
+function onEditInvalid(event: EditInvalidEvent<ProjectRow>): void {
+  logEvent('veto', `${event.row.id} · ${event.columnKey}: ${event.message}`)
 }
 
 /** Cierra el ciclo. Dispara exactamente una vez por editor abierto, haya commiteado o no. */
@@ -657,6 +744,8 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:selection-column="selectionColumn"
             v-model:loading="loading"
             v-model:column-reorder="columnReorder"
+            v-model:column-auto-fit="columnAutoFit"
+            v-model:header-groups="headerGroups"
             v-model:column-visibility="columnVisibility"
             :columns="projectColumns"
             :grouped="grouped"
@@ -689,7 +778,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:sort="sort"
             :rows="tableRows"
             :row-count="tableRowCount"
-            :columns="projectColumns"
+            :columns="tableColumns"
             row-key="id"
             :theme="theme"
             :variant="variant"
@@ -700,6 +789,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:selected-rows="selectedRows"
             @row-selection-change="onRowSelectionChange"
             :column-reorder="columnReorder"
+            :column-auto-fit="columnAutoFit"
             :column-selection="columnSelection"
             :row-selection="rowSelection"
             :dense="dense"
@@ -721,6 +811,8 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
               pinEnd: 'Anclar al final',
               hideColumn: 'Ocultar columna',
               resetColumns: 'Restablecer columnas',
+              resizeColumn: 'Ancho de la columna',
+              invalidValue: 'Valor no válido',
             }"
             table-id="demo-projects"
             persist
@@ -729,8 +821,11 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             @cell-select="onCellSelect"
             @range-select="onRangeSelect"
             @range-copy="onRangeCopy"
+            @column-resize="onColumnResize"
             @before-edit="onBeforeEdit"
             @edit-commit="onEditCommit"
+            @cells-commit="onCellsCommit"
+            @edit-invalid="onEditInvalid"
             @after-edit="onAfterEdit"
             @group-toggle="onGroupToggle"
             @rows-request="onRowsRequest"

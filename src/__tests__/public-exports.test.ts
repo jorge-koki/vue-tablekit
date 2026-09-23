@@ -32,6 +32,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  applyEdits,
   COLOR_TOKENS,
   countSelectedRows,
   EMPTY_ROW_SELECTION,
@@ -41,8 +42,14 @@ import {
   toggleRowSelection,
 } from '../index'
 import type {
+  BatchEditSource,
+  CellEdit,
   CellRange,
+  CellsCommitEvent,
+  CellValueList,
   DataTableLabels,
+  EditInvalidEvent,
+  EditSource,
   RowSelectionChangeEvent,
   RowSelectionState,
   SelectionColumnOptions,
@@ -119,6 +126,39 @@ describe('helpers de selección', () => {
     expect(rowSelectionHeaderState(EMPTY_ROW_SELECTION, 10)).toBe('none')
     expect(rowSelectionHeaderState(setAllRowsSelected(true), 10)).toBe('all')
     expect(rowSelectionHeaderState(toggleRowSelection(EMPTY_ROW_SELECTION, 1), 10)).toBe('some')
+  })
+})
+
+describe('lotes y validación', () => {
+  it('`applyEdits` aplica un lote de `cellsCommit` con una sola copia', () => {
+    const rows: Row[] = [
+      { id: 1, name: 'Ada' },
+      { id: 2, name: 'Grace' },
+    ]
+    const edit: CellEdit = { rowIndex: 1, columnKey: 'name', newValue: 'Linus' }
+    const next = applyEdits(rows, [edit])
+
+    expect(next[1]?.name).toBe('Linus')
+    expect(next[0]).toBe(rows[0])
+  })
+
+  it('los tipos de los lotes, la validación y las listas se importan desde el punto de entrada', () => {
+    const source: BatchEditSource = 'paste'
+    const via: EditSource = 'undo'
+    const tags: CellValueList = ['fe', 'be']
+    const batch: CellsCommitEvent<Row> = { source, changes: [] }
+    const invalid: EditInvalidEvent<Row> = {
+      source: via,
+      row: { id: 1, name: 'Ada' },
+      rowIndex: 0,
+      column: { key: 'name' },
+      columnKey: 'name',
+      value: tags,
+      message: 'no',
+    }
+
+    expect(batch.source).toBe('paste')
+    expect(invalid.message).toBe('no')
   })
 })
 

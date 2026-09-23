@@ -2,11 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch, watchEffect } from 'vue'
 import type {
   AfterEditEvent,
+  BatchEditSource,
   BeforeEditEvent,
   CellEditorSlotProps,
   CellPosition,
   CellRange,
   CellSelectEvent,
+  CellsCommitEvent,
+  CellEditorType,
   CellValue,
   ColumnPin,
   ColumnPinState,
@@ -18,6 +21,8 @@ import type {
   DataTableColumn,
   DataTableProps,
   EditCommitEvent,
+  EditInvalidEvent,
+  EditSource,
   GroupByState,
   GroupRow,
   GroupToggleEvent,
@@ -44,7 +49,7 @@ import {
 } from './internal/row-selection'
 import { useRowMetrics } from './composables/useRowMetrics'
 import { useRemoteRows } from './composables/useRemoteRows'
-import { useColumnLayout } from './composables/useColumnLayout'
+import { columnWidthBounds, useColumnLayout } from './composables/useColumnLayout'
 import type { ResolvedColumn } from './composables/useColumnLayout'
 import { useCellRange } from './composables/useCellRange'
 import type { RangeRect } from './composables/useCellRange'
@@ -55,6 +60,8 @@ import { useCellEditor } from './composables/useCellEditor'
 import type { CellGeometry } from './composables/useCellEditor'
 import { useTablePersistence } from './composables/useTablePersistence'
 import {
+  AUTOSCROLL_EDGE,
+  AUTOSCROLL_MAX_STEP,
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_HEADER_HEIGHT,
   DEFAULT_OVERSCAN,
@@ -65,6 +72,8 @@ import {
   DENSE_ROW_HEIGHT,
   DENSE_ROW_NUMBER_DIGIT_WIDTH,
   DENSE_ROW_NUMBER_PADDING,
+  KEYBOARD_RESIZE_STEP,
+  KEYBOARD_RESIZE_STEP_LARGE,
   ROW_NUMBER_DIGIT_WIDTH,
   ROW_NUMBER_MAX_WIDTH,
   ROW_NUMBER_MIN_WIDTH,
@@ -72,10 +81,34 @@ import {
   SELECTION_COLUMN_KEY,
   SELECTION_COLUMN_WIDTH,
 } from './internal/constants'
-import { SELECTION_HOOKS } from './internal/renderers'
+import {
+  numberRenderer,
+  resolveRenderer,
+  SELECTION_HOOKS,
+  textRenderer,
+} from './internal/renderers'
 import { EMPTY_GROUP_LABEL } from './internal/aggregations'
-import { buildRangeText } from './internal/clipboard'
-import { clamp, normalizeZoom, readCellValue } from './internal/values'
+import { buildRangeText, parseClipboardText } from './internal/clipboard'
+import {
+  cellValuesEqual,
+  clamp,
+  clearedValue,
+  formatCellValue,
+  normalizeZoom,
+  readCellValue,
+  readRawValue,
+  REJECTED_VALUE,
+  textToCellValue,
+  toCellValue,
+} from './internal/values'
+import type { ParsedCellValue } from './internal/values'
+import {
+  createTextEstimator,
+  MEASURED_TEXT_CANDIDATES,
+  pickWidestTexts,
+  widestNaturalWidth,
+  widestTextWidth,
+} from './internal/autosize'
 import './styles/datatable.css'
 
 /**
@@ -125,6 +158,7 @@ const props = withDefaults(defineProps<DataTableProps<TRow>>(), {
   radiusBorder: 'none',
   showRowNumbers: true,
   columnReorder: true,
+  columnAutoFit: true,
   // Apagadas por defecto: son gestos EXTRA sobre el encabezado y la regleta, y
   // una tabla que no los espera no debería empezar a seleccionar de a columnas
   // enteras porque alguien presionó un título.
@@ -137,6 +171,7 @@ const props = withDefaults(defineProps<DataTableProps<TRow>>(), {
   bordered: false,
   selectionMode: 'cell',
   rangeSelection: true,
+  undoLimit: 100,
   // Apagado por defecto: con una celda marcada, el anillo del viewport es una
   // segunda señal para la misma posición y encierra toda la tabla en un borde de
   // color. El costo de accesibilidad de este default está documentado en el
@@ -165,6 +200,8 @@ const emit = defineEmits<{
   beforeEdit: [BeforeEditEvent<TRow>]
   afterEdit: [AfterEditEvent<TRow>]
   editCommit: [EditCommitEvent<TRow>]
+  cellsCommit: [CellsCommitEvent<TRow>]
+  editInvalid: [EditInvalidEvent<TRow>]
   columnResize: [ColumnResizeEvent]
   rowClick: [{ row: TRow; rowIndex: number }]
   cellSelect: [CellSelectEvent<TRow>]
@@ -332,6 +369,8 @@ const labels = computed<Required<DataTableLabels>>(() => {
     pinEnd: declared.pinEnd ?? 'Pin to end',
     hideColumn: declared.hideColumn ?? 'Hide column',
     resetColumns: declared.resetColumns ?? 'Reset columns',
+    resizeColumn: declared.resizeColumn ?? 'Resize column',
+    invalidValue: declared.invalidValue ?? 'Invalid value',
   }
 })
 
@@ -509,7 +548,37 @@ const baseHeaderHeight = computed(() => {
   return props.dense ? DENSE_HEADER_HEIGHT : DEFAULT_HEADER_HEIGHT
 })
 
-const headerHeight = computed(() => baseHeaderHeight.value * zoom.value)
+/** Alto de la fila de títulos del encabezado, ya con el zoom. */
+const columnHeaderHeight = computed(() => baseHeaderHeight.value * zoom.value)
+
+/** Si alguna columna visible declara `headerGroup`: es lo que hace aparecer la fila de grupos. */
+const hasHeaderGroups = computed(() =>
+  resolvedColumns.value.some((column) => Boolean(column.column.headerGroup)),
+)
+
+/** Alto de la fila de grupos, ya con el zoom, o 0 si no hay grupos. */
+const headerGroupRowHeight = computed(() => {
+  if (!hasHeaderGroups.value) return 0
+  const declared = props.headerGroupHeight
+  const base =
+    declared !== undefined && Number.isFinite(declared) && declared > 0
+      ? declared
+      : baseHeaderHeight.value
+  return base * zoom.value
+})
+
+/**
+ * Alto de TODO el encabezado: la fila de títulos y, si hay, la de grupos.
+ *
+ * Es el número que usa todo lo que se ubica debajo del encabezado —el canvas,
+ * el editor, el recuadro del rango, el scroll hasta una celda, el auto-scroll—,
+ * así que la fila de grupos entra en todos esos cálculos sin que ninguno sepa
+ * que existe.
+ */
+const headerHeight = computed(() => columnHeaderHeight.value + headerGroupRowHeight.value)
+
+/** Cuántas filas de encabezado ve la tecnología asistiva: 1, o 2 con grupos. */
+const headerRows = computed(() => (hasHeaderGroups.value ? 2 : 1))
 
 /* ---------------------------------------------------------- Modo servidor */
 
@@ -873,6 +942,80 @@ const headerStrips = computed(() => {
   ]
 })
 
+/** Un título de grupo de columnas: dónde va, qué abarca y qué columnas toca. */
+interface HeaderGroupSpan {
+  key: string
+  label: string
+  left: number
+  width: number
+  colIndex: number
+  colSpan: number
+  firstKey: string
+  lastKey: string
+  /** Si la columna de al lado, a la izquierda, ya tiene título: el borde es compartido. */
+  joined: boolean
+}
+
+/**
+ * Los títulos de grupo, repartidos en las mismas tres tiras que los títulos de
+ * columna —ancladas al inicio, la que scrollea, ancladas al final—.
+ *
+ * Un grupo es una CORRIDA de columnas visibles y contiguas con el mismo
+ * `headerGroup` dentro de una misma tira. Se arma sobre el orden vigente, así
+ * que mover u ocultar columnas lo rearma solo, y una columna anclada nunca
+ * comparte título con una que scrollea: están en cajas distintas que se mueven
+ * distinto.
+ */
+const headerGroupStrips = computed(() => {
+  if (!hasHeaderGroups.value) return []
+  return headerStrips.value.map((strip) => {
+    const spans: HeaderGroupSpan[] = []
+    let current: HeaderGroupSpan | null = null
+    let previousTitled = false
+    for (const column of strip.columns) {
+      const label = column.column.headerGroup
+      const joined = previousTitled
+      previousTitled = Boolean(label)
+      if (current && label && label === current.label) {
+        current.width += column.width
+        current.colSpan += 1
+        current.lastKey = column.key
+        continue
+      }
+      current = null
+      if (!label) continue
+      current = {
+        key: `${strip.id}:${column.key}`,
+        label,
+        left: column.offset - strip.origin,
+        width: column.width,
+        colIndex: column.index + 1,
+        colSpan: 1,
+        firstKey: column.key,
+        lastKey: column.key,
+        joined,
+      }
+      spans.push(current)
+    }
+    return { id: strip.id, className: strip.className, style: strip.style, spans }
+  })
+})
+
+/**
+ * Clic sobre un título de grupo: con `columnSelection`, selecciona todas sus
+ * columnas de punta a punta, igual que el clic sobre un título de columna
+ * selecciona una.
+ */
+function onHeaderGroupClick(span: HeaderGroupSpan): void {
+  if (!props.columnSelection || !rangeEnabled.value) return
+  const rowCount = visibleRowCount.value
+  if (rowCount === 0) return
+  cellRange.set({
+    anchor: { rowIndex: 0, columnKey: span.firstKey },
+    focus: { rowIndex: rowCount - 1, columnKey: span.lastKey },
+  })
+}
+
 /* ------------------------------------------------------------- Persistencia */
 
 /**
@@ -1093,9 +1236,19 @@ const pool = useRowPool<TRow>({
     focusViewport(position)
     cellRange.extendTo(position)
   },
+  onCellCtrlPointerDown: (position) => {
+    if (props.selectionMode === 'none') return
+    editor.commitIfElsewhere(position)
+    focusViewport(position)
+    // Sin rango no hay qué sumar: el gesto vuelve a ser un clic común.
+    if (rangeEnabled.value) cellRange.add(position)
+    else selectCell(position)
+  },
   onCellDragOver: (position) => {
     cellRange.extendTo(position)
   },
+  onDragMove: (clientX, clientY, overCell) => onSelectionDragMove(clientX, clientY, overCell),
+  onDragEnd: () => stopAutoScroll(),
   onRowNumberPointerDown: (rowIndex) => {
     if (props.selectionMode === 'none') return
     // El foco va al viewport igual que con un clic en una celda: después de
@@ -1350,6 +1503,16 @@ const rangeBox = computed<Record<string, string> | null>(() => {
   return rect ? boxStyleFor(rect) : null
 })
 
+/** Un recuadro por cada rango sumado con `Ctrl`+clic, además del vigente. */
+const extraRangeBoxes = computed<Record<string, string>[]>(() => {
+  const boxes: Record<string, string>[] = []
+  for (const rect of cellRange.extraRects.value) {
+    const box = boxStyleFor(rect)
+    if (box) boxes.push(box)
+  }
+  return boxes
+})
+
 /* --------------------------------------------------- Destello del copiado */
 
 /**
@@ -1409,8 +1572,9 @@ function flashCopied(rect: RangeRect): void {
  * vista.
  */
 function isColumnInRange(columnIndex: number): boolean {
-  const rect = rangeRect.value
-  return rect !== null && columnIndex >= rect.columnStart && columnIndex <= rect.columnEnd
+  const inside = (rect: RangeRect | null): boolean =>
+    rect !== null && columnIndex >= rect.columnStart && columnIndex <= rect.columnEnd
+  return inside(rangeRect.value) || cellRange.extraRects.value.some(inside)
 }
 
 /** Columnas abarcadas por un rectángulo, en orden visual. */
@@ -1434,8 +1598,10 @@ function columnsOfRect(rect: RangeRect): DataTableColumn<TRow>[] {
  * celda activa.
  */
 watch(
-  () => cellRange.range.value,
-  (range) => {
+  // También los rangos sumados: un `Ctrl`+clic sobre una celda suelta no cambia
+  // `range` —era `null` y sigue siéndolo—, pero sí lo que está seleccionado.
+  [() => cellRange.range.value, cellRange.extras],
+  ([range]) => {
     const rect = cellRange.rect.value
     // Sin rectángulo no hay nada que contar que `update:activeCell` no haya
     // dicho ya: o no hay celda activa, o su columna está oculta.
@@ -1445,6 +1611,7 @@ watch(
       rowStart: rect.rowStart,
       rowEnd: rect.rowEnd,
       columns: columnsOfRect(rect),
+      ranges: cellRange.ranges.value,
     })
   },
 )
@@ -2047,6 +2214,34 @@ function onViewportKeyDown(event: KeyboardEvent): void {
     return
   }
 
+  // `Ctrl`+`Z` deshace y `Ctrl`+`Y` —o `Ctrl`+`Shift`+`Z`, la convención de
+  // Mac— rehace. Con el editor abierto este manejador ni corre: el deshacer es
+  // el del `<input>`, sobre lo que se está escribiendo.
+  if (ctrl && !event.altKey && (event.key === 'z' || event.key === 'Z')) {
+    if (props.undoLimit <= 0) return
+    event.preventDefault()
+    if (shift) redo()
+    else undo()
+    return
+  }
+  if (ctrl && !event.altKey && (event.key === 'y' || event.key === 'Y')) {
+    if (props.undoLimit <= 0) return
+    event.preventDefault()
+    redo()
+    return
+  }
+
+  // `Alt`+`Shift`+`←`/`→` entra al modo ancho de la columna activa. Va antes del
+  // `switch` porque ahí `Shift`+flecha EXTIENDE el rango, y este atajo no tiene
+  // que hacerlo nunca: sobre una columna que no se redimensiona, simplemente no
+  // pasa nada. `Alt`+flecha sola queda afuera a propósito: es "atrás" y
+  // "adelante" del navegador.
+  if (event.altKey && shift && !ctrl && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    event.preventDefault()
+    startKeyboardResize(event.key === 'ArrowRight' ? 1 : -1)
+    return
+  }
+
   switch (event.key) {
     case 'ArrowDown':
       event.preventDefault()
@@ -2139,6 +2334,15 @@ function onViewportKeyDown(event: KeyboardEvent): void {
       // Sin editor abierto, Escape no limpia la selección: perder de vista
       // dónde estabas parado es más molesto que seguir seleccionado.
       return
+    case 'Delete':
+    case 'Backspace':
+      // Las dos, y no solo `Supr`: en un teclado de Mac la tecla que dice
+      // "delete" manda `Backspace`. En modo fila no hay celda elegida que vaciar,
+      // por lo mismo que `Enter` no edita.
+      if (rowMode.value) return
+      event.preventDefault()
+      clearSelection()
+      return
     default:
       break
   }
@@ -2223,13 +2427,8 @@ function onViewportCopy(event: ClipboardEvent): void {
   // cancelar el evento: cancelarlo sin dejar nada vaciaría el portapapeles.
   if (!data) return
 
-  const columns = columnsOfRect(rect)
+  const { text, rowCount, columns } = copyText(rect)
   if (columns.length === 0) return
-
-  const { text, rowCount } = buildRangeText<TRow>(rect.rowStart, rect.rowEnd, columns, {
-    rowAt: (rowIndex) => grouping.rowAt(rowIndex),
-    toSourceIndex: (rowIndex) => grouping.toSourceIndex(rowIndex),
-  })
   // Un rango que solo abarca cabeceras de grupo no aporta ninguna línea. Dejar
   // pasar el evento conserva lo que ya hubiera en el portapapeles, que es mejor
   // que reemplazarlo por una cadena vacía.
@@ -2249,9 +2448,64 @@ function onViewportCopy(event: ClipboardEvent): void {
   })
 }
 
+/**
+ * El texto de la selección, con más de un rango si los hay.
+ *
+ * Varios rangos se copian juntos solo cuando forman un bloque que una hoja de
+ * cálculo puede pegar: si abarcan las MISMAS columnas, se apilan en el orden de
+ * sus filas; si abarcan las MISMAS filas, se ponen lado a lado en el orden de sus
+ * columnas. Cualquier otra combinación no tiene una forma rectangular que
+ * pegar, y se copia solo el rango vigente, que es lo que hace Excel sin
+ * preguntar.
+ */
+function copyText(current: RangeRect): {
+  text: string
+  rowCount: number
+  columns: DataTableColumn<TRow>[]
+} {
+  const source = {
+    rowAt: (rowIndex: number) => grouping.rowAt(rowIndex),
+    toSourceIndex: (rowIndex: number) => grouping.toSourceIndex(rowIndex),
+  }
+  const rects = rowMode.value ? [current] : selectionRects()
+  const first = rects[0]
+  const sameColumns =
+    first !== undefined &&
+    rects.every(
+      (rect) => rect.columnStart === first.columnStart && rect.columnEnd === first.columnEnd,
+    )
+  const sameRows =
+    first !== undefined &&
+    rects.every((rect) => rect.rowStart === first.rowStart && rect.rowEnd === first.rowEnd)
+
+  if (rects.length > 1 && sameColumns && first) {
+    const columns = columnsOfRect(first)
+    const parts = [...rects]
+      .sort((a, b) => a.rowStart - b.rowStart)
+      .map((rect) => buildRangeText<TRow>(rect.rowStart, rect.rowEnd, columns, source))
+      .filter((part) => part.rowCount > 0)
+    return {
+      text: parts.map((part) => part.text).join('\n'),
+      rowCount: parts.reduce((total, part) => total + part.rowCount, 0),
+      columns,
+    }
+  }
+
+  if (rects.length > 1 && sameRows && first) {
+    const columns = [...rects]
+      .sort((a, b) => a.columnStart - b.columnStart)
+      .flatMap((rect) => columnsOfRect(rect))
+    return { ...buildRangeText<TRow>(first.rowStart, first.rowEnd, columns, source), columns }
+  }
+
+  const columns = columnsOfRect(current)
+  return { ...buildRangeText<TRow>(current.rowStart, current.rowEnd, columns, source), columns }
+}
+
 interface ViewportListeners {
   keydown?: (event: KeyboardEvent) => void
   copy?: (event: ClipboardEvent) => void
+  paste?: (event: ClipboardEvent) => void
 }
 
 /**
@@ -2267,7 +2521,7 @@ interface ViewportListeners {
  */
 const viewportListeners = computed<ViewportListeners>(() => {
   if (props.selectionMode === 'none') return {}
-  return { keydown: onViewportKeyDown, copy: onViewportCopy }
+  return { keydown: onViewportKeyDown, copy: onViewportCopy, paste: onViewportPaste }
 })
 
 /* ----------------------------------------------------------------- Editor */
@@ -2315,6 +2569,508 @@ function columnCanvasX(column: ResolvedColumn<TRow>): number {
   return column.offset + Math.min(0, metrics.scrollLeft + metrics.viewportWidth - totalWidth.value)
 }
 
+/* ------------------------------------------ Lotes: vaciar, pegar, deshacer */
+
+/**
+ * `Supr` / `Retroceso`: vacía la selección, sea una celda o un rango.
+ *
+ * Cada celda queda con lo que dejaría su editor al borrarlo todo y confirmar
+ * —ver `clearedValue`— y pasa por las mismas reglas que una edición suelta:
+ * `editable`, el veto de `beforeEdit` y la validación. Lo que sobrevive se
+ * anuncia en UN `cellsCommit`.
+ */
+function clearSelection(): void {
+  const changes: EditCommitEvent<TRow>[] = []
+  for (const rect of selectionRects()) {
+    collectChanges(rect, 'clear', (type, current) => clearedValue(type, current), changes)
+  }
+  publishBatch('clear', changes)
+}
+
+/**
+ * Los rectángulos seleccionados, en el orden en que se eligieron: los que se
+ * sumaron con `Ctrl`+clic y, al final, el que se está extendiendo.
+ */
+function selectionRects(): RangeRect[] {
+  const rect = cellRange.rect.value
+  return rect ? [...cellRange.extraRects.value, rect] : [...cellRange.extraRects.value]
+}
+
+/**
+ * Recorre un rectángulo y junta los cambios de las celdas que cambian de verdad.
+ *
+ * Saltea lo que no es una celda de datos —una cabecera de grupo, una fila que el
+ * servidor no mandó— y la columna de casillas, que marca filas y no edita nada.
+ * Cada cambio sale con el índice del DATASET, que es el que el consumidor usa
+ * para escribir.
+ */
+function collectChanges(
+  rect: RangeRect,
+  source: EditSource,
+  nextValue: (type: CellEditorType, current: CellValue, position: CellPosition) => ParsedCellValue,
+  into: EditCommitEvent<TRow>[],
+): void {
+  const columns = resolvedColumns.value
+  for (let rowIndex = rect.rowStart; rowIndex <= rect.rowEnd; rowIndex += 1) {
+    if (grouping.rowAt(rowIndex) === undefined) continue
+    for (let columnIndex = rect.columnStart; columnIndex <= rect.columnEnd; columnIndex += 1) {
+      const column = columns[columnIndex]
+      if (!column || column.key === SELECTION_COLUMN_KEY) continue
+      const position: CellPosition = { rowIndex, columnKey: column.key }
+      const change = editor.prepareChange(position, source, (type, current) =>
+        nextValue(type, current, position),
+      )
+      if (change) into.push(withSourceRowIndex(change))
+    }
+  }
+}
+
+/**
+ * `Ctrl`+`V`: pega el texto del portapapeles desde la esquina de la selección.
+ *
+ * Con el editor abierto el pegado es del `<input>`, que lo resuelve solo. En
+ * modo fila no hay una celda de donde empezar.
+ */
+function onViewportPaste(event: ClipboardEvent): void {
+  if (editor.editing.value || rowMode.value) return
+  const text = event.clipboardData?.getData('text/plain')
+  if (!text) return
+  event.preventDefault()
+  pasteText(text)
+}
+
+/**
+ * Pega un bloque de texto con tabuladores —lo que deja cualquier hoja de cálculo
+ * en el portapapeles, y lo que deja el copiado de esta misma tabla—.
+ *
+ * El bloque arranca en la esquina superior izquierda de la selección y ocupa lo
+ * que mide, recortado por el borde de la tabla: no se agregan filas ni columnas.
+ * Si la selección es un múltiplo exacto del bloque —el caso típico es copiar UNA
+ * celda y seleccionar muchas—, el bloque se repite hasta llenarla.
+ *
+ * Las cabeceras de grupo se saltean sin consumir una fila del bloque: no son
+ * filas de datos, y comerse una línea del portapapeles con ellas correría todo lo
+ * que viene abajo. La columna de casillas, igual. Una fila del modo servidor que
+ * todavía no llegó SÍ consume su línea: es un dato, solo que no está, y saltearla
+ * pegaría cada línea siguiente sobre la fila equivocada.
+ *
+ * Cada celda pasa por `column.parse` si la columna lo declara y, si no, por la
+ * lectura del editor de la columna —número, fecha, casilla, opción por valor o
+ * por etiqueta, lista—; después, por las reglas de toda edición: `editable`, el
+ * veto de `beforeEdit` y `validate`. Al terminar, lo pegado queda seleccionado.
+ */
+function pasteText(text: string): void {
+  const rect = selectionRects().at(-1)
+  if (!rect) return
+  const block = parseClipboardText(text)
+  const blockRows = block.length
+  const blockColumns = Math.max(0, ...block.map((line) => line.length))
+  if (blockRows === 0 || blockColumns === 0) return
+
+  const columns = resolvedColumns.value.filter(
+    (column, index) => index >= rect.columnStart && column.key !== SELECTION_COLUMN_KEY,
+  )
+  const selectedRows = rect.rowEnd - rect.rowStart + 1
+  const selectedColumns = rect.columnEnd - rect.columnStart + 1
+  const tiles =
+    (selectedRows > blockRows || selectedColumns > blockColumns) &&
+    selectedRows % blockRows === 0 &&
+    selectedColumns % blockColumns === 0
+  const targetRows = tiles ? selectedRows : blockRows
+  const targetColumns = Math.min(columns.length, tiles ? selectedColumns : blockColumns)
+  if (targetColumns === 0) return
+
+  const changes: EditCommitEvent<TRow>[] = []
+  const rowCount = visibleRowCount.value
+  let line = 0
+  let rowIndex = rect.rowStart
+  let lastRow = rect.rowStart
+  for (; line < targetRows && rowIndex < rowCount; rowIndex += 1) {
+    if (grouping.entryAt(rowIndex)?.kind === 'group') continue
+    const cells = block[line % blockRows] ?? []
+    const row = grouping.rowAt(rowIndex)
+    if (row !== undefined) {
+      for (let offset = 0; offset < targetColumns; offset += 1) {
+        const column = columns[offset]
+        const cellText = cells[offset % blockColumns]
+        if (!column || cellText === undefined) continue
+        const position: CellPosition = { rowIndex, columnKey: column.key }
+        const sourceIndex = grouping.toSourceIndex(rowIndex)
+        const change = editor.prepareChange(position, 'paste', (type, current) =>
+          parsePastedText(column.column, cellText, type, current, row, sourceIndex),
+        )
+        if (change) changes.push(withSourceRowIndex(change))
+      }
+    }
+    lastRow = rowIndex
+    line += 1
+  }
+
+  publishBatch('paste', changes)
+
+  const first = columns[0]
+  const last = columns[targetColumns - 1]
+  if (first && last) {
+    cellRange.set({
+      anchor: { rowIndex: rect.rowStart, columnKey: first.key },
+      focus: { rowIndex: lastRow, columnKey: last.key },
+    })
+  }
+}
+
+/** El valor de una celda a partir del texto pegado: `column.parse` o el editor. */
+function parsePastedText(
+  column: DataTableColumn<TRow>,
+  text: string,
+  type: CellEditorType,
+  current: CellValue,
+  row: TRow,
+  rowIndex: number,
+): ParsedCellValue {
+  if (column.parse) {
+    const parsed = column.parse(text, row, rowIndex)
+    return parsed === undefined ? REJECTED_VALUE : parsed
+  }
+  return textToCellValue(text, type, current, column.options)
+}
+
+/** Anuncia un lote, si cambió algo. */
+function publishBatch(source: BatchEditSource, changes: EditCommitEvent<TRow>[]): void {
+  if (changes.length === 0) return
+  emit('cellsCommit', { source, changes })
+  recordHistory(changes)
+}
+
+/* ------------------------------------------------ Deshacer y rehacer */
+
+/**
+ * Un cambio recordado, con lo necesario para encontrar su celda más tarde.
+ *
+ * `rowKey` va cuando la tabla declara `rowKey`: con él, la fila se busca por su
+ * identidad, y el historial sobrevive a que el consumidor reordene o filtre
+ * `rows` entre la edición y el deshacer. Sin él solo queda el índice.
+ */
+interface HistoryChange {
+  rowIndex: number
+  rowKey: RowKey | null
+  columnKey: string
+  oldValue: CellValue
+  newValue: CellValue
+}
+
+/** Un gesto entero —una edición, un vaciado, un pegado—: se deshace de una vez. */
+type HistoryEntry = readonly HistoryChange[]
+
+/**
+ * Las dos pilas. Son `shallowRef` de arrays que se REEMPLAZAN, no se mutan, para
+ * que `canUndo()` y `canRedo()` sean reactivos: una barra de herramientas que
+ * los llama en su template se actualiza sola.
+ */
+const undoStack = shallowRef<readonly HistoryEntry[]>([])
+const redoStack = shallowRef<readonly HistoryEntry[]>([])
+
+/**
+ * Recuerda lo que la tabla acaba de anunciar como escrito.
+ *
+ * La tabla no sabe si el consumidor lo aplicó —es controlada—, y no hace falta:
+ * al deshacer, cada celda se revierte solo si TODAVÍA tiene el valor que se
+ * anunció. Un gesto nuevo borra lo que había para rehacer, como en cualquier
+ * editor.
+ */
+function recordHistory(changes: readonly EditCommitEvent<TRow>[]): void {
+  const limit = props.undoLimit
+  if (limit <= 0 || changes.length === 0) return
+  const keyed = props.rowKey !== undefined
+  const entry: HistoryEntry = changes.map((change) => ({
+    rowIndex: change.rowIndex,
+    rowKey: keyed ? rowKeyOf(change.row, change.rowIndex) : null,
+    columnKey: change.columnKey,
+    oldValue: change.oldValue,
+    newValue: change.newValue,
+  }))
+  undoStack.value = [...undoStack.value, entry].slice(-limit)
+  if (redoStack.value.length > 0) redoStack.value = []
+}
+
+/** `Ctrl`+`Z`: revierte el último gesto. */
+function undo(): void {
+  const entry = undoStack.value.at(-1)
+  if (!entry) return
+  undoStack.value = undoStack.value.slice(0, -1)
+  redoStack.value = [...redoStack.value, entry]
+  replayHistory(entry, 'undo')
+}
+
+/** `Ctrl`+`Y` o `Ctrl`+`Shift`+`Z`: vuelve a aplicar el último gesto deshecho. */
+function redo(): void {
+  const entry = redoStack.value.at(-1)
+  if (!entry) return
+  redoStack.value = redoStack.value.slice(0, -1)
+  undoStack.value = [...undoStack.value, entry]
+  replayHistory(entry, 'redo')
+}
+
+function clearHistory(): void {
+  undoStack.value = []
+  redoStack.value = []
+}
+
+/**
+ * Anuncia un gesto del historial, en un sentido o en el otro.
+ *
+ * Cada celda se busca por su clave —o por su índice, sin `rowKey`— y solo se
+ * incluye si su valor actual es el que dejó el gesto: si el consumidor no lo
+ * aplicó, o si la celda cambió después por otra vía, revertirla pisaría algo que
+ * el historial no conoce. Pasa por el veto de `beforeEdit` con `source` `'undo'`
+ * o `'redo'` y por `editable`, pero NO por `validate`: devuelve un valor que ya
+ * estuvo en la celda.
+ *
+ * Sin grupos, la celda activa va al primer cambio, para que se vea qué se
+ * deshizo. Con grupos no: la fila puede estar dentro de uno plegado.
+ */
+function replayHistory(entry: HistoryEntry, source: 'undo' | 'redo'): void {
+  const rows = props.rows
+  let indexByKey: Map<RowKey, number> | null = null
+  const locate = (change: HistoryChange): number => {
+    if (change.rowKey === null) return change.rowIndex
+    if (!indexByKey) {
+      indexByKey = new Map()
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]
+        if (row !== undefined) indexByKey.set(rowKeyOf(row, index), index)
+      }
+    }
+    return indexByKey.get(change.rowKey) ?? -1
+  }
+
+  const changes: EditCommitEvent<TRow>[] = []
+  for (const change of source === 'undo' ? [...entry].reverse() : entry) {
+    const rowIndex = locate(change)
+    const row = rows[rowIndex]
+    const column = getColumnDefinition(change.columnKey)
+    if (row === undefined || !column || column.editable !== true) continue
+
+    const current = readCellValue(column, row)
+    const expected = source === 'undo' ? change.newValue : change.oldValue
+    const target = source === 'undo' ? change.oldValue : change.newValue
+    if (!cellValuesEqual(current, expected)) continue
+    if (vetoedEdit(source, row, rowIndex, column, current)) continue
+
+    changes.push({
+      row,
+      rowIndex,
+      column,
+      columnKey: change.columnKey,
+      oldValue: current,
+      newValue: target,
+    })
+  }
+
+  if (changes.length === 0) return
+  emit('cellsCommit', { source, changes })
+
+  const first = changes.reduce((top, change) => (change.rowIndex < top.rowIndex ? change : top))
+  if (first && !grouping.active.value) {
+    const position = { rowIndex: first.rowIndex, columnKey: first.columnKey }
+    selectCell(position)
+    scrollToCell(position)
+  }
+}
+
+/**
+ * El veto de `beforeEdit` para una celda ubicada por su índice del DATASET.
+ *
+ * Es el mismo protocolo que usa el editor —evento mutable, `cancel()` que cierra
+ * sobre una variable local—, armado aquí porque el historial ya trae el índice
+ * del dataset y el editor trabaja en posiciones visibles.
+ */
+function vetoedEdit(
+  source: EditSource,
+  row: TRow,
+  rowIndex: number,
+  column: DataTableColumn<TRow>,
+  value: CellValue,
+): boolean {
+  let canceled = false
+  const event: BeforeEditEvent<TRow> = {
+    source,
+    row,
+    rowIndex,
+    column,
+    columnKey: column.key,
+    value,
+    canceled: false,
+    cancel(): void {
+      canceled = true
+      event.canceled = true
+    },
+  }
+  emit('beforeEdit', event)
+  return canceled || event.canceled
+}
+
+/* ------------------------------------- Auto-scroll al arrastrar un rango */
+
+/**
+ * Dónde está el puntero durante un arrastre de selección, o `null` fuera de uno.
+ *
+ * El pool lo reporta con cada movimiento; el auto-scroll lo lee una vez por
+ * frame. Es una variable suelta y no un ref porque nada se pinta a partir de
+ * ella: solo la lee el bucle.
+ */
+let dragPointer: { x: number; y: number; overCell: boolean } | null = null
+let autoScrollFrame = 0
+
+/**
+ * El puntero se movió arrastrando un rango: arma el auto-scroll si hace falta.
+ *
+ * No decide nada aquí. Saber si el puntero está fuera del cuerpo exige leer la
+ * caja del viewport, y leer layout en cada `pointermove` —que llega más seguido
+ * que los frames— forzaría reflows de más. Se agenda un frame y ahí se decide.
+ */
+function onSelectionDragMove(x: number, y: number, overCell: boolean): void {
+  if (!rangeEnabled.value) return
+  dragPointer = { x, y, overCell }
+  if (autoScrollFrame === 0) autoScrollFrame = requestAnimationFrame(autoScrollStep)
+}
+
+function stopAutoScroll(): void {
+  dragPointer = null
+  if (autoScrollFrame !== 0) cancelAnimationFrame(autoScrollFrame)
+  autoScrollFrame = 0
+}
+
+/**
+ * Cuánto desplazar en un eje, según dónde está el puntero respecto del cuerpo.
+ *
+ * Fuera del cuerpo, o dentro de la franja pegada al borde, devuelve un paso con
+ * signo que crece con la distancia. Sobre una celda solo cuenta la franja: una
+ * celda está, por definición, dentro del cuerpo, así que una coordenada que diga
+ * lo contrario no describe al puntero —es un evento sintético sin coordenadas—.
+ */
+function autoScrollStepFor(
+  position: number,
+  start: number,
+  end: number,
+  overCell: boolean,
+): number {
+  if (overCell && (position < start || position > end)) return 0
+  const before = start + AUTOSCROLL_EDGE - position
+  if (before > 0) return -Math.min(AUTOSCROLL_MAX_STEP, Math.ceil(before / 2))
+  const after = position - (end - AUTOSCROLL_EDGE)
+  if (after > 0) return Math.min(AUTOSCROLL_MAX_STEP, Math.ceil(after / 2))
+  return 0
+}
+
+/**
+ * Un frame del auto-scroll: desplaza hacia donde está el puntero y extiende el
+ * rango hasta la celda que quedó en ese borde.
+ *
+ * La celda se calcula con la geometría —alturas de fila, offsets de columna— y
+ * no preguntándole al DOM qué hay debajo: recién desplazado, el pool todavía no
+ * repintó, y el nodo bajo el puntero puede ser el de la fila que acaba de irse.
+ *
+ * Se vuelve a agendar mientras siga habiendo adónde ir. Contra el borde del
+ * contenido se detiene, y el próximo movimiento del puntero lo vuelve a armar.
+ */
+function autoScrollStep(): void {
+  autoScrollFrame = 0
+  const pointer = dragPointer
+  const viewport = viewportEl.value
+  if (!pointer || !viewport) return
+
+  const box = viewport.getBoundingClientRect()
+  const viewportWidth = viewport.clientWidth
+  const viewportHeight = viewport.clientHeight
+  // El cuerpo es lo que queda del viewport sin el encabezado arriba ni la
+  // regleta a la izquierda: los dos están pegados ahí y tapan a las filas.
+  const top = box.top + headerHeight.value
+  const bottom = box.top + viewportHeight
+  const left = box.left + rowNumberWidth.value
+  const right = box.left + viewportWidth
+
+  const stepY = autoScrollStepFor(pointer.y, top, bottom, pointer.overCell)
+  const stepX = autoScrollStepFor(pointer.x, left, right, pointer.overCell)
+  if (stepX === 0 && stepY === 0) return
+
+  const maxTop = Math.max(0, headerHeight.value + rowMetrics.value.totalSize - viewportHeight)
+  const maxLeft = Math.max(0, totalWidth.value - viewportWidth)
+  const scrollTop = clamp(viewport.scrollTop + stepY, 0, maxTop)
+  const scrollLeft = clamp(viewport.scrollLeft + stepX, 0, maxLeft)
+  const moved = scrollTop !== viewport.scrollTop || scrollLeft !== viewport.scrollLeft
+  if (moved) scroll.scrollTo({ top: scrollTop, left: scrollLeft })
+  // Sobre una celda y sin nada que desplazar, la celda es la que el pool ya
+  // anunció por `onCellDragOver`: debajo del puntero no se movió nada.
+  if (!moved && pointer.overCell) return
+
+  // El puntero puede estar muy lejos de la tabla; la celda es la del borde por
+  // el que salió, a la altura o a lo ancho donde salió.
+  const x = clamp(pointer.x, left, right - 1) - box.left
+  const y = clamp(pointer.y, top, bottom - 1) - box.top
+  const target = cellAtViewportPoint(x, y, scrollTop, scrollLeft, viewportWidth)
+  if (target) cellRange.extendTo(target)
+
+  if (moved) autoScrollFrame = requestAnimationFrame(autoScrollStep)
+}
+
+/**
+ * La celda en un punto del viewport, con el scroll dado.
+ *
+ * `x` e `y` son relativos a la esquina del viewport. El scroll llega como
+ * argumento y no se lee del estado porque el que manda es el que se acaba de
+ * escribir, y el evento que lo propaga todavía no llegó.
+ */
+function cellAtViewportPoint(
+  x: number,
+  y: number,
+  scrollTop: number,
+  scrollLeft: number,
+  viewportWidth: number,
+): CellPosition | null {
+  const rowCount = visibleRowCount.value
+  if (rowCount === 0) return null
+  const rowIndex = clamp(
+    rowMetrics.value.indexAt(scrollTop + y - headerHeight.value),
+    0,
+    rowCount - 1,
+  )
+  const column = columnAtViewportX(x, scrollLeft, viewportWidth)
+  return column ? { rowIndex, columnKey: column.key } : null
+}
+
+/**
+ * La columna que se ve en una coordenada horizontal del viewport.
+ *
+ * Es la inversa de {@link columnCanvasX}, con el scroll explícito. Una anclada
+ * tapa a la que pasa por debajo, así que gana. Una coordenada que no cae en
+ * ninguna —la tabla es más angosta que el viewport— devuelve la de ese extremo.
+ */
+function columnAtViewportX(
+  x: number,
+  scrollLeft: number,
+  viewportWidth: number,
+): ResolvedColumn<TRow> | null {
+  const columns = resolvedColumns.value
+  const endShift = Math.min(0, scrollLeft + viewportWidth - totalWidth.value) - scrollLeft
+  let passing: ResolvedColumn<TRow> | null = null
+
+  for (const column of columns) {
+    const start =
+      column.pinned === 'start'
+        ? column.offset
+        : column.pinned === 'end'
+          ? column.offset + endShift
+          : column.offset - scrollLeft
+    if (x < start || x >= start + column.width) continue
+    if (column.pinned !== null) return column
+    passing ??= column
+  }
+
+  if (passing) return passing
+  const first = columns[0]
+  return first && x < first.offset ? first : (columns[columns.length - 1] ?? null)
+}
+
 const editor = useCellEditor<TRow>({
   host: editorHostEl,
   slotHost: slotEditorHostEl,
@@ -2327,7 +3083,15 @@ const editor = useCellEditor<TRow>({
   isCellPainted: (position) => pool.getCellElement(position.rowIndex, position.columnKey) !== null,
   emitBeforeEdit: (event) => emit('beforeEdit', withSourceRowIndex(event)),
   emitAfterEdit: (event) => emit('afterEdit', withSourceRowIndex(event)),
-  emitEditCommit: (event) => emit('editCommit', withSourceRowIndex(event)),
+  emitEditCommit: (event) => {
+    const commit = withSourceRowIndex(event)
+    emit('editCommit', commit)
+    recordHistory([commit])
+  },
+  validate: (position, row, column, value) =>
+    validationMessage(column, value, row, grouping.toSourceIndex(position.rowIndex)),
+  emitInvalid: (event) => emit('editInvalid', withSourceRowIndex(event)),
+  invalidMessage: () => labels.value.invalidValue,
   onEnterCommit: () => {
     // Enter confirma y baja una fila, como en una hoja de cálculo. La selección se
     // mueve aunque el padre no persista el valor: es navegación, no edición.
@@ -2392,6 +3156,7 @@ const editorSlotProps = computed<CellEditorSlotProps<TRow> | null>(() => {
     column,
     columnKey: position.columnKey,
     value: readCellValue(column, row),
+    error: editor.error.value,
     commit: (newValue: CellValue) => editor.commitSlotValue(newValue),
     cancel: () => editor.cancelEdit(),
   }
@@ -2579,6 +3344,8 @@ function paintFrame(): void {
     editing: editor.editing.value,
     active: activeCell.value,
     range: rangeRect.value,
+    extraRanges: cellRange.extraRects.value,
+    headerRows: headerRows.value,
     selectionMode: props.selectionMode,
     stripe: props.stripe,
     resolveRowKey,
@@ -2664,6 +3431,8 @@ watch(
     // Y extenderla también: el tinte del rango lo pinta el pool, así que cada
     // paso del arrastre necesita su frame.
     rangeRect,
+    // Lo mismo con los rangos sumados con `Ctrl`+clic, que también tiñe el pool.
+    cellRange.extraRects,
     () => props.selectionMode,
     // La vista aplanada es un array nuevo en cada reconstrucción, así que alcanza
     // con observarla para cubrir `groupBy`, la expansión y los agregados de una
@@ -2731,6 +3500,10 @@ function onResizePointerDown(event: PointerEvent, column: ResolvedColumn<TRow>):
 
   event.preventDefault()
   event.stopPropagation()
+  // Un arrastre en pleno modo ancho lo reemplaza: se confirma lo hecho con el
+  // teclado y el arrastre parte de ahí. Sin cerrarlo, la sesión anunciaría al
+  // final un `columnResize` con un ancho que el mouse ya cambió.
+  endKeyboardResize(true)
   handle.setPointerCapture(event.pointerId)
 
   const startX = event.clientX
@@ -2778,6 +3551,384 @@ function onResizePointerDown(event: PointerEvent, column: ResolvedColumn<TRow>):
   handle.addEventListener('pointermove', onPointerMove)
   handle.addEventListener('pointerup', onPointerUp)
   handle.addEventListener('pointercancel', onPointerUp)
+}
+
+/* ---------------------------------------- Redimensionar con el teclado */
+
+/**
+ * El modo ancho: qué columna se está redimensionando con el teclado y desde qué
+ * ancho.
+ *
+ * Es el equivalente de teclado de un arrastre, y se modela igual: una sesión con
+ * el ancho de partida y el último aplicado. `update:columnWidths` sale con cada
+ * flecha, como con cada `pointermove`; `columnResize` sale UNA vez, al salir del
+ * modo, con el cambio neto, como un arrastre al soltar. `Escape` vuelve al ancho
+ * de partida y no anuncia ningún resize, porque no lo hubo.
+ *
+ * Mientras dura, el tirador de esa columna tiene el foco y es el único con
+ * `tabindex`. Fuera del modo no lleva ninguno, ni siquiera `-1`, y no por
+ * prolijidad: un elemento con `tabindex="-1"` toma el foco con un clic, así que
+ * el tirador se lo quedaría después de cada arrastre del mouse y las flechas
+ * siguientes le llegarían a él en lugar de a la grilla.
+ */
+interface KeyboardResizeSession {
+  columnKey: string
+  startWidth: number
+  appliedWidth: number
+}
+
+const keyboardResize = shallowRef<KeyboardResizeSession | null>(null)
+
+/**
+ * Entra al modo ancho sobre la columna de la celda activa y aplica el primer paso.
+ *
+ * El paso se aplica al entrar porque el atajo YA es un gesto de redimensionar: si
+ * solo abriera el modo, la primera pulsación parecería no hacer nada. Después el
+ * foco pasa al tirador, que es lo que le permite a un lector de pantalla anunciar
+ * el ancho: un `separator` enfocable con su valor.
+ */
+function startKeyboardResize(direction: 1 | -1): void {
+  const position = activeCell.value
+  // En modo fila no hay una columna activa que redimensionar.
+  if (!position || rowMode.value) return
+  const column = layout.getResolvedColumn(position.columnKey)
+  if (!column?.resizable) return
+
+  endKeyboardResize(true, false)
+  const startWidth = column.baseWidth
+  const appliedWidth = layout.setColumnWidth(
+    column.key,
+    startWidth + direction * KEYBOARD_RESIZE_STEP,
+  )
+  keyboardResize.value = { columnKey: column.key, startWidth, appliedWidth }
+  // Si el usuario scrolleó después de elegir la celda, la columna puede estar
+  // fuera de la vista, y el tirador tiene que quedar donde se lo vea.
+  scrollToCell(position)
+
+  // El `tabindex` recién existe después del render.
+  void nextTick(() => resizeHandleFor(column.key)?.focus({ preventScroll: true }))
+}
+
+/** El encabezado de una columna, o `null` si no está pintado. */
+function headerCellFor(columnKey: string): HTMLElement | null {
+  const viewport = viewportEl.value
+  if (!viewport) return null
+  // Se compara `dataset` en lugar de armar un selector con la clave: una clave
+  // con comillas o corchetes rompería el selector, y `CSS.escape` no existe en
+  // todos los entornos donde corre esto.
+  for (const cell of viewport.querySelectorAll<HTMLElement>('.dt-header-cell')) {
+    if (cell.dataset.columnKey === columnKey) return cell
+  }
+  return null
+}
+
+/**
+ * El mensaje con que `column.validate` rechaza un valor, o `null` si lo acepta.
+ *
+ * Traduce las respuestas posibles a una sola: un texto con contenido es el
+ * mensaje, `false` es el mensaje por defecto de `labels.invalidValue`, y todo lo
+ * demás —`true`, `null`, `undefined`, la cadena vacía— acepta.
+ */
+function validationMessage(
+  column: DataTableColumn<TRow>,
+  value: CellValue,
+  row: TRow,
+  rowIndex: number,
+): string | null {
+  const validate = column.validate
+  if (!validate) return null
+  const result = validate(value, row, rowIndex)
+  if (result === false) return labels.value.invalidValue
+  if (typeof result === 'string' && result.trim() !== '') return result
+  return null
+}
+
+/** El tirador de una columna, o `null` si la columna no tiene. */
+function resizeHandleFor(columnKey: string): HTMLElement | null {
+  const handle = headerCellFor(columnKey)?.querySelector('.dt-resize-handle')
+  return handle instanceof HTMLElement ? handle : null
+}
+
+/**
+ * Aplica un ancho durante el modo ancho y deja el borde de la columna a la vista.
+ *
+ * Parte del ancho RESUELTO y no del último aplicado: en modo controlado, un padre
+ * que rechaza el ancho tiene que ver la columna quieta, no un contador interno
+ * que sigue sumando por detrás.
+ */
+function applyKeyboardWidth(session: KeyboardResizeSession, width: number): void {
+  session.appliedWidth = layout.setColumnWidth(session.columnKey, width)
+  const position = activeCell.value
+  if (position) scrollToCell(position)
+}
+
+/**
+ * Sale del modo ancho.
+ *
+ * `commit` en `false` es el `Escape`: vuelve al ancho de partida. `returnFocus`
+ * devuelve el teclado a la grilla, y va en `false` cuando el foco ya se fue a
+ * otro lado —un `Tab`, un clic afuera— y quitárselo a ese lado sería robarlo.
+ */
+function endKeyboardResize(commit: boolean, returnFocus = true): void {
+  const session = keyboardResize.value
+  if (!session) return
+  // Se limpia ANTES de mover el foco: el `blur` que dispara `focus()` vuelve a
+  // entrar aquí, y tiene que encontrar la sesión ya cerrada.
+  keyboardResize.value = null
+
+  const changed = session.appliedWidth !== session.startWidth
+  if (!commit) {
+    if (changed) layout.setColumnWidth(session.columnKey, session.startWidth)
+  } else if (changed) {
+    emit('columnResize', {
+      columnKey: session.columnKey,
+      width: session.appliedWidth,
+      previousWidth: session.startWidth,
+    })
+  }
+
+  if (returnFocus) viewportEl.value?.focus({ preventScroll: true })
+}
+
+/**
+ * Teclado del tirador durante el modo ancho.
+ *
+ * Ninguna tecla sigue de largo: el tirador vive adentro del viewport, y el evento
+ * burbujearía hasta el manejador de la grilla, que movería la celda activa con
+ * las mismas flechas o abriría el editor con una letra.
+ */
+function onResizeKeyDown(event: KeyboardEvent, columnKey: string): void {
+  const session = keyboardResize.value
+  if (!session || session.columnKey !== columnKey) return
+  const column = layout.getResolvedColumn(columnKey)
+  if (!column) return
+  event.stopPropagation()
+
+  switch (event.key) {
+    case 'ArrowLeft':
+    case 'ArrowRight': {
+      event.preventDefault()
+      // `Shift` solo es el paso grande. Con `Alt` es el atajo de entrada repetido,
+      // y repetirlo tiene que seguir haciendo lo mismo que hizo al entrar.
+      const step =
+        event.shiftKey && !event.altKey ? KEYBOARD_RESIZE_STEP_LARGE : KEYBOARD_RESIZE_STEP
+      applyKeyboardWidth(session, column.baseWidth + (event.key === 'ArrowRight' ? step : -step))
+      return
+    }
+    case 'Home':
+      event.preventDefault()
+      applyKeyboardWidth(session, columnWidthBounds(column.column).min)
+      return
+    case 'End':
+      event.preventDefault()
+      applyKeyboardWidth(session, columnWidthBounds(column.column).max)
+      return
+    case 'ArrowUp':
+    case 'ArrowDown':
+    case 'PageUp':
+    case 'PageDown':
+    case ' ':
+      // Sin esto el navegador scrollearía el viewport, que es el contenedor con
+      // scroll más cercano al tirador enfocado.
+      event.preventDefault()
+      return
+    case 'Enter':
+      event.preventDefault()
+      endKeyboardResize(true)
+      return
+    case 'Escape':
+      event.preventDefault()
+      endKeyboardResize(false)
+      return
+    default:
+      // `Tab` sigue su curso: el foco se va, y el `blur` confirma.
+      return
+  }
+}
+
+/** El foco dejó el tirador sin `Enter` ni `Escape`: lo hecho queda hecho. */
+function onResizeBlur(columnKey: string): void {
+  if (keyboardResize.value?.columnKey === columnKey) endKeyboardResize(true, false)
+}
+
+/**
+ * Los atributos del tirador: ninguno fuera del modo ancho, los de un `separator`
+ * enfocable dentro.
+ *
+ * Fuera del modo el tirador es un separador estático, y un separador estático no
+ * lleva valor ni nombre. No es solo corrección: el nombre de un `columnheader` se
+ * arma con el texto de todo lo que tiene adentro, así que un `aria-label`
+ * permanente en el tirador se le sumaría al título de cada columna.
+ */
+function resizeHandleAttrs(column: ResolvedColumn<TRow>): Record<string, string | number> {
+  if (keyboardResize.value?.columnKey !== column.key) return {}
+  const { min, max } = columnWidthBounds(column.column)
+  return {
+    tabindex: -1,
+    'aria-label': `${labels.value.resizeColumn}: ${column.label}`,
+    'aria-valuenow': column.baseWidth,
+    'aria-valuemin': min,
+    'aria-valuemax': max,
+    'aria-valuetext': `${column.baseWidth} px`,
+  }
+}
+
+/* ------------------------------------------ Ajustar el ancho al contenido */
+
+/**
+ * Doble clic sobre el tirador: la columna toma el ancho de su contenido.
+ *
+ * Los dos clics que lo forman ya pasaron por `onResizePointerDown` como dos
+ * arrastres sin movimiento, que no cambian nada ni anuncian nada; este es el
+ * único que escribe.
+ */
+function onResizeDoubleClick(event: MouseEvent, columnKey: string): void {
+  // El encabezado no tiene nada que hacer con este doble clic: ni ordenar ni
+  // seleccionar la columna. Tampoco con el ajuste apagado.
+  event.stopPropagation()
+  if (props.columnAutoFit) fitColumnToContent(columnKey)
+}
+
+/**
+ * Ajusta una columna al ancho de lo que muestra.
+ *
+ * Mide tres cosas y se queda con la más ancha:
+ *
+ * - **El encabezado**, con la flecha del orden y el lugar que reserva para los
+ *   botones de anclar y de menú.
+ * - **Lo pintado**: las celdas y los agregados de grupo que están en el DOM,
+ *   clonados tal cual. Es lo que cubre cualquier renderer, propio incluido,
+ *   porque mide lo que el renderer dibujó y no lo que la tabla supone.
+ * - **El dataset entero**, solo con los renderers `text` y `number`, que son los
+ *   únicos donde lo que se ve es exactamente un texto. Una columna de texto se
+ *   ajusta mirando las cien mil filas, no las treinta de la pantalla: el nombre
+ *   más largo casi nunca está en las que se ven.
+ *
+ * Con el esqueleto de carga encendido solo cuenta el encabezado: lo pintado son
+ * barras, y lo que hay en `rows` puede ser el resultado de la consulta anterior.
+ *
+ * El resultado se convierte a píxeles base —se mide lo pintado, con el zoom
+ * adentro— y pasa por el mismo `setColumnWidth` que el arrastre, así que se acota
+ * igual, se guarda igual y se anuncia igual.
+ */
+function fitColumnToContent(columnKey: string): void {
+  const column = layout.getResolvedColumn(columnKey)
+  if (!column?.resizable) return
+
+  const cells = paintedCellsOf(columnKey)
+  const pieces = [...cells, ...paintedAggregatesOf(columnKey)]
+  const header = headerCellFor(columnKey)
+  if (header) pieces.push(header)
+
+  let widest = widestNaturalWidth(pieces)
+  if (!isLoading.value && measuresEveryRow(column)) {
+    widest = Math.max(widest, widestTextOfDataset(column, cells[0]))
+  }
+  // Sin nada medible —un entorno sin layout— no hay de dónde sacar un ancho.
+  if (!(widest > 0)) return
+
+  const previousWidth = column.baseWidth
+  const width = layout.setColumnWidth(columnKey, Math.ceil(widest / zoom.value))
+  if (width !== previousWidth) emit('columnResize', { columnKey, width, previousWidth })
+}
+
+/** Si el ajuste de esta columna puede recorrer el dataset entero. */
+function measuresEveryRow(column: ResolvedColumn<TRow>): boolean {
+  const renderer = resolveRenderer<TRow>(column.column.renderer)
+  return renderer === textRenderer || renderer === numberRenderer
+}
+
+/**
+ * Las celdas de una columna que están pintadas y tienen un dato.
+ *
+ * Con el esqueleto de carga encendido no hay ninguna: lo que se ve son barras, y
+ * los datos de debajo pueden ser los de la consulta anterior.
+ */
+function paintedCellsOf(columnKey: string): HTMLElement[] {
+  if (isLoading.value) return []
+  const cells: HTMLElement[] = []
+  const { start, end } = rowVirtual.window.value
+  for (let rowIndex = start; rowIndex < end; rowIndex += 1) {
+    // Una fila que el servidor todavía no mandó es un marcador, no un dato.
+    if (grouping.rowAt(rowIndex) === undefined) continue
+    const cell = pool.getCellElement(rowIndex, columnKey)
+    if (cell) cells.push(cell)
+  }
+  return cells
+}
+
+/** Los agregados de esa columna en las cabeceras de grupo pintadas. */
+function paintedAggregatesOf(columnKey: string): HTMLElement[] {
+  const canvas = canvasEl.value
+  if (!canvas || isLoading.value) return []
+  const found: HTMLElement[] = []
+  for (const element of canvas.querySelectorAll<HTMLElement>('.dt-group-aggregate')) {
+    if (element.closest('[hidden]')) continue
+    if (Reflect.get(element, '__dtAggColumnKey') === columnKey) found.push(element)
+  }
+  return found
+}
+
+/**
+ * El texto más ancho de la columna en TODAS las filas, en px de pantalla.
+ *
+ * Recorre el dataset una vez armando el texto de cada celda como lo arma el
+ * copiado —mismo renderer, mismo `format`—, estima cuáles son los más anchos y
+ * mide de verdad solo esos. En modo servidor recorre lo que llegó: lo que no está
+ * en `rows` no tiene texto que medir.
+ *
+ * `sample` es una celda pintada de la columna, si hay: las celdas de prueba van
+ * en su mismo padre —la fila o el carril anclado— para heredar lo mismo que ella.
+ */
+function widestTextOfDataset(
+  column: ResolvedColumn<TRow>,
+  sample: HTMLElement | undefined,
+): number {
+  const parent =
+    sample?.parentNode ?? canvasEl.value?.querySelector('.dt-row:not([hidden])') ?? null
+  if (!parent) return 0
+
+  const definition = column.column
+  const renderer = resolveRenderer<TRow>(definition.renderer)
+  const rows = props.rows
+  const contextAt = (index: number, row: TRow) => {
+    const raw = readRawValue(definition, row)
+    return {
+      value: toCellValue(raw),
+      raw,
+      row,
+      rowIndex: index,
+      column: definition,
+      isEditing: false,
+    }
+  }
+
+  const probe = document.createElement('div')
+  probe.className = 'dt-cell'
+  parent.appendChild(probe)
+  const estimate = createTextEstimator(probe)
+  probe.remove()
+
+  const candidates = pickWidestTexts(
+    MEASURED_TEXT_CANDIDATES,
+    (offer) => {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]
+        if (row === undefined) continue
+        const ctx = contextAt(index, row)
+        offer(renderer.text ? renderer.text(ctx) : formatCellValue(ctx.value), index)
+      }
+    },
+    estimate,
+    (index) => {
+      const row = rows[index]
+      const cellClass = definition.cellClass
+      if (!cellClass || row === undefined) return ''
+      const ctx = contextAt(index, row)
+      return cellClass(ctx.value, row, index) ?? ''
+    },
+  )
+  return widestTextWidth(candidates, parent)
 }
 
 /* ------------------------------------------- Mover columnas arrastrando */
@@ -2862,7 +4013,7 @@ const columnGhostStyle = computed<Record<string, string> | null>(() => {
   return {
     transform: `translate3d(${drag.ghostX}px, ${drag.ghostY}px, 0)`,
     width: `${Math.min(drag.width, GHOST_MAX_WIDTH)}px`,
-    height: `${headerHeight.value}px`,
+    height: `${columnHeaderHeight.value}px`,
   }
 })
 
@@ -3656,6 +4807,11 @@ defineExpose({
   collapseAllGroups: grouping.collapseAll,
   enterFullscreen,
   exitFullscreen,
+  undo,
+  redo,
+  canUndo: () => undoStack.value.length > 0,
+  canRedo: () => redoStack.value.length > 0,
+  clearHistory,
 })
 
 /* ------------------------------------------------------------- Ciclo de vida */
@@ -3721,6 +4877,9 @@ onBeforeUnmount(() => {
   // El destello del copiado se apaga con un temporizador propio, que podría
   // vencer después del desmontaje y escribir sobre un componente que ya no está.
   if (copyFlashTimer !== 0) clearTimeout(copyFlashTimer)
+  // El pool ya avisó el fin del arrastre al desmontarse; esto cubre el frame que
+  // pudiera haber quedado agendado igual.
+  stopAutoScroll()
 })
 
 /* --------------------------------------------------------------- Presentación */
@@ -3728,6 +4887,8 @@ onBeforeUnmount(() => {
 const rootStyle = computed(() => ({
   '--dt-row-height': `${rowHeight.value}px`,
   '--dt-header-height': `${headerHeight.value}px`,
+  '--dt-header-row-height': `${columnHeaderHeight.value}px`,
+  '--dt-header-group-height': `${headerGroupRowHeight.value}px`,
   // Igual que las alturas: el número lo decide JS —porque de él dependen los
   // offsets de todas las columnas— y el CSS lo espeja, nunca al revés.
   '--dt-row-number-width': `${rowNumberWidth.value}px`,
@@ -3842,7 +5003,7 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
     class="dt-root"
     :style="rootStyle"
     :role="gridRole"
-    :aria-rowcount="visibleRowCount + 1"
+    :aria-rowcount="visibleRowCount + headerRows"
     :aria-colcount="resolvedColumns.length"
     :data-dense="dense ? 'true' : 'false'"
     :data-theme="theme"
@@ -3906,7 +5067,41 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
           `columnheader` sigan perteneciendo a esta fila y no a un contenedor
           intermedio.
         -->
-        <div class="dt-header-row" role="row" aria-rowindex="1">
+        <!--
+          La fila de GRUPOS de columnas, encima de la de títulos. Solo existe si
+          alguna columna visible declara `headerGroup`. Replica la estructura de
+          la fila de abajo —esquina y tres tiras— para que cada título de grupo
+          quede exactamente sobre sus columnas, ancladas incluidas.
+        -->
+        <div v-if="hasHeaderGroups" class="dt-header-group-row" role="row" aria-rowindex="1">
+          <div v-if="showRowNumbers" class="dt-corner" role="none" aria-hidden="true" />
+          <div
+            v-for="strip in headerGroupStrips"
+            :key="strip.id"
+            :class="strip.className"
+            :style="strip.style"
+            role="none"
+          >
+            <div
+              v-for="span in strip.spans"
+              :key="span.key"
+              class="dt-header-group"
+              :class="{
+                'dt-header-group--selectable': columnSelection,
+                'dt-header-group--joined': span.joined,
+              }"
+              role="columnheader"
+              :aria-colindex="span.colIndex"
+              :aria-colspan="span.colSpan"
+              :title="span.label"
+              :style="{ transform: `translate3d(${span.left}px, 0, 0)`, width: `${span.width}px` }"
+              @click="onHeaderGroupClick(span)"
+            >
+              <span class="dt-header-group-label">{{ span.label }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="dt-header-row" role="row" :aria-rowindex="headerRows">
           <!--
             Esquina sobre la regleta de numeración. Es el primer tramo del `flex`,
             así que además de taparla le reserva su ancho: la tira anclada que sigue
@@ -4056,12 +5251,20 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
                   <circle cx="8" cy="12.5" r="1.4" fill="currentColor" />
                 </svg>
               </button>
+              <!--
+                El tirador. Fuera del modo ancho es un separador estático; dentro,
+                un `separator` enfocable con su valor. Ver `keyboardResize`.
+              -->
               <span
                 v-if="column.resizable"
                 class="dt-resize-handle"
                 role="separator"
                 aria-orientation="vertical"
+                v-bind="resizeHandleAttrs(column)"
                 @pointerdown="onResizePointerDown($event, column)"
+                @keydown="onResizeKeyDown($event, column.key)"
+                @blur="onResizeBlur(column.key)"
+                @dblclick="onResizeDoubleClick($event, column.key)"
               />
             </div>
           </div>
@@ -4125,6 +5328,13 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
       -->
       <div v-if="showEmptyMessage" class="dt-empty">{{ emptyText }}</div>
       <div v-if="rangeBox" class="dt-range-box" :style="rangeBox" aria-hidden="true" />
+      <div
+        v-for="(box, index) in extraRangeBoxes"
+        :key="index"
+        class="dt-range-box dt-range-box--extra"
+        :style="box"
+        aria-hidden="true"
+      />
       <!--
         Confirmación del copiado: las mismas líneas, cambiando de color y
         volviendo. Se monta sobre el área que se copió y se desmonta al terminar.

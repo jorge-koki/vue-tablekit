@@ -325,7 +325,80 @@
 .dt-header-row {
   position: relative;
   display: flex;
+  /* Sin grupos es todo el encabezado; con grupos, la fila de abajo. El
+     componente escribe siempre la variable, el `100%` es solo el respaldo. */
+  height: var(--dt-header-row-height, 100%);
+}
+
+/*
+ * La fila de GRUPOS de columnas, encima de la de títulos.
+ *
+ * Misma estructura que la de abajo —un `flex` con la esquina y las tres tiras—
+ * para que cada título de grupo quede exactamente sobre sus columnas, y una
+ * línea abajo que la separa de los títulos.
+ */
+.dt-header-group-row {
+  position: relative;
+  display: flex;
+  height: var(--dt-header-group-height);
+}
+
+/*
+ * La línea que separa la fila de grupos de la de títulos. Va en un
+ * pseudo-elemento por ENCIMA de la esquina y de las tiras ancladas: como sombra
+ * de la fila quedaba debajo de sus fondos opacos y se cortaba justo sobre la
+ * regleta y las columnas ancladas.
+ */
+.dt-header-group-row::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  height: 1px;
+  background: var(--dt-border);
+  pointer-events: none;
+}
+
+/*
+ * Un título de grupo. Se ubica como un título de columna —absoluto, corrido por
+ * `transform`— y abarca el ancho de sus columnas. Las líneas de los costados son
+ * las que dicen dónde empieza y dónde termina el grupo, que es toda su función.
+ */
+.dt-header-group {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 100%;
+  padding: 0 var(--dt-cell-px);
+  overflow: hidden;
+  box-shadow:
+    inset 1px 0 0 var(--dt-border),
+    inset -1px 0 0 var(--dt-border);
+  color: var(--dt-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dt-header-group-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pegado a otro grupo: el borde de la izquierda ya lo dibuja el vecino, y
+   dibujarlo dos veces daría una línea del doble de gruesa. */
+.dt-header-group--joined {
+  box-shadow: inset -1px 0 0 var(--dt-border);
+}
+
+/* Con `columnSelection`, el título de un grupo selecciona sus columnas. */
+.dt-header-group--selectable {
+  cursor: pointer;
 }
 
 /* La tira que scrollea. No lleva nada especial: se deja llevar. */
@@ -1012,8 +1085,19 @@
     width 120ms ease;
 }
 
+/*
+ * Enfocado solo puede estar en el modo ancho —fuera de él no lleva `tabindex`—, y
+ * se dibuja igual que agarrado con el mouse: es el mismo gesto, hecho con otras
+ * teclas. La línea de color a todo el alto ES el indicador de foco, así que el
+ * contorno del navegador sobra.
+ */
+.dt-resize-handle:focus {
+  outline: none;
+}
+
 .dt-resize-handle:hover::after,
-.dt-resize-handle:active::after {
+.dt-resize-handle:active::after,
+.dt-resize-handle:focus::after {
   width: 2px;
   height: 100%;
   top: 0;
@@ -2065,6 +2149,109 @@
    * vería. Esta línea lo devuelve exactamente donde corresponde.
    */
   user-select: text;
+}
+
+/* Un valor que `column.validate` rechazó con `Enter`: el editor sigue abierto y
+   su borde pasa al rojo de la paleta, para que se lea como "esto no" antes de
+   leer el mensaje. */
+.dt-editor.dt-editor--invalid {
+  border-color: var(--dt-color-red);
+}
+
+/*
+ * El mensaje del rechazo, pegado debajo de la celda en edición.
+ *
+ * Vive en el mismo host que el editor y se posiciona en las mismas coordenadas
+ * del canvas, así que acompaña al scroll igual que él. No recibe punteros: está
+ * encima de la fila siguiente, y comerse ese clic sería peor que taparla un
+ * momento. El texto va en `--dt-bg` sobre el rojo, que da contraste en los dos
+ * temas: blanco sobre el rojo oscuro del claro, oscuro sobre el rojo claro del
+ * oscuro.
+ */
+.dt-editor-error {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  max-width: 20rem;
+  padding: 0.25em var(--dt-cell-px);
+  background: var(--dt-color-red);
+  color: var(--dt-bg);
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/*
+ * El panel de casillas del editor de listas, colgado bajo la celda.
+ *
+ * Se viste como el menú de la columna —mismo fondo elevado, misma sombra— porque
+ * es el mismo tipo de cosa: una lista flotante de opciones. No toma el foco:
+ * sigue en el input de arriba, y la opción activa se marca con una clase y con
+ * `aria-activedescendant`.
+ */
+.dt-tags-picker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  max-height: 16em;
+  overflow: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--dt-border);
+  border-radius: var(--dt-radius);
+  background: var(--dt-bg-elevated);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  will-change: transform;
+}
+
+.dt-tags-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem var(--dt-cell-px);
+  border-radius: max(0px, calc(var(--dt-radius) - 0.25rem));
+  color: var(--dt-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dt-tags-option:hover,
+.dt-tags-option--active {
+  background: var(--dt-bg-accented);
+}
+
+/* La casilla dibujada: un cuadro que se llena con el color principal y una
+   tilde. Es un dibujo y no un `<input>` porque el foco no tiene que bajar aquí. */
+.dt-tags-check {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  border: 1.5px solid var(--dt-border-accented);
+  border-radius: 3px;
+}
+
+.dt-tags-option[aria-selected='true'] .dt-tags-check {
+  border-color: var(--dt-primary);
+  background: var(--dt-primary);
+}
+
+.dt-tags-option[aria-selected='true'] .dt-tags-check::after {
+  content: '';
+  position: absolute;
+  top: 0.05em;
+  left: 0.28em;
+  width: 0.25em;
+  height: 0.5em;
+  border: solid var(--dt-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 /* El `<select>` trae su propia flecha nativa, así que no necesita el padding

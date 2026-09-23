@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { DataTableColumnToggle } from 'vue-tablekit'
 import type {
   ColumnVisibilityState,
@@ -33,11 +34,13 @@ import DemoZoomStepper from './DemoZoomStepper.vue'
  * cada prop de la tabla se leen en una línea, que es exactamente lo que alguien
  * evaluando la librería viene a averiguar.
  *
- * ## Los grupos son `<fieldset>` de verdad
+ * ## Los grupos
  *
- * No son `<div>` con un título: un lector de pantalla anuncia la leyenda al
- * entrar en cualquier control del grupo, así que "Compacta" se escucha como
- * "Apariencia, Compacta". Un `<div>` con un `<h3>` al lado no produce eso.
+ * Seis, en el orden en que se usan: Datos, Selección, Columnas, Filas,
+ * Apariencia y Vista. Cada uno es un `<details>` plegable con un `<fieldset>`
+ * nombrado adentro, así que un lector de pantalla anuncia el grupo al entrar en
+ * cualquiera de sus controles. Un control que no aplica en el modo elegido se
+ * deshabilita en lugar de ocultarse: comunica la dependencia.
  */
 defineProps<{
   /** Columnas ofrecidas al selector de visibilidad. */
@@ -136,6 +139,16 @@ const groupingPreset = defineModel<GroupingPresetId>('groupingPreset', { require
 /* --------------------------------------------------------------- Selección */
 
 const selectionMode = defineModel<SelectionMode>('selectionMode', { required: true })
+
+/** Qué hace cada modo, en una línea, bajo el selector. */
+const SELECTION_MODE_NOTES: Record<SelectionMode, string> = {
+  cell: 'Una celda. Arrastra o Shift+clic para un bloque; Ctrl+clic suma otro.',
+  row: 'La fila entera. Se edita con doble clic.',
+  none: 'Sin selección ni teclado.',
+}
+
+/** Los gestos que seleccionan un bloque producen un rango, y el rango solo existe en modo celda. */
+const cellMode = computed(() => selectionMode.value === 'cell')
 const columnSelection = defineModel<boolean>('columnSelection', { required: true })
 const rowSelection = defineModel<boolean>('rowSelection', { required: true })
 const focusRing = defineModel<boolean>('focusRing', { required: true })
@@ -155,270 +168,243 @@ const showRowNumbers = defineModel<boolean>('showRowNumbers', { required: true }
 const selectionColumn = defineModel<boolean>('selectionColumn', { required: true })
 const loading = defineModel<'skeleton' | 'blank' | false>('loading', { required: true })
 const columnReorder = defineModel<boolean>('columnReorder', { required: true })
+const columnAutoFit = defineModel<boolean>('columnAutoFit', { required: true })
+const headerGroups = defineModel<boolean>('headerGroups', { required: true })
 const columnVisibility = defineModel<ColumnVisibilityState>('columnVisibility', { required: true })
 </script>
 
 <template>
+  <!--
+    Seis grupos, en el orden en que se usan: qué datos, cómo se seleccionan, qué
+    se hace con las columnas y con las filas, cómo se ve y cómo se mira. Cada
+    grupo es un `<details>` plegable; adentro, un `<fieldset>` con nombre para que
+    un lector de pantalla anuncie el grupo al entrar en cualquiera de sus
+    controles.
+  -->
   <div class="demo-controls">
-    <fieldset class="demo-group">
-      <legend class="demo-group-title">Datos</legend>
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Datos</summary>
+      <fieldset class="demo-group-body" aria-label="Datos">
+        <label class="demo-field">
+          <span>Filas</span>
+          <select v-model.number="rowCount">
+            <option v-for="count in ROW_COUNTS" :key="count" :value="count">
+              {{ count === 0 ? 'Vacía' : count.toLocaleString('es-MX') }}
+            </option>
+          </select>
+        </label>
 
-      <label class="demo-field">
-        <span>Filas</span>
-        <select v-model.number="rowCount">
-          <option v-for="count in ROW_COUNTS" :key="count" :value="count">
-            {{ count === 0 ? 'Vacía' : count.toLocaleString('es-MX') }}
-          </option>
-        </select>
-      </label>
+        <label class="demo-field">
+          <span>Origen</span>
+          <select v-model="dataSource">
+            <option value="memory">En memoria</option>
+            <option value="server">Servidor (simulado)</option>
+          </select>
+        </label>
 
-      <label class="demo-field">
-        <span>Origen</span>
-        <select v-model="dataSource">
-          <option value="memory">En memoria</option>
-          <option value="server">Servidor (simulado)</option>
-        </select>
-      </label>
+        <p v-if="dataSource === 'server'" class="demo-field-note">
+          Páginas de 50 filas con {{ SERVER_LATENCY }}ms de demora. Scrollea rápido para ver los
+          marcadores.
+        </p>
 
-      <!--
-        La demora es lo que hace visible el marcador de carga. Sin ella la página
-        llegaría en el mismo tick del pedido y no habría nada que mirar.
-      -->
-      <p v-if="dataSource === 'server'" class="demo-field-note">
-        Se piden <strong>50 filas</strong> por vez, con {{ SERVER_LATENCY }}ms de demora. Scrollea
-        rápido para ver los marcadores, y mira la bitácora.
-      </p>
-    </fieldset>
+        <label class="demo-field">
+          <span>Esperando datos</span>
+          <select v-model="loading">
+            <option :value="false">No</option>
+            <option value="skeleton">Con esqueleto</option>
+            <option value="blank">Sin mostrar nada</option>
+          </select>
+        </label>
+      </fieldset>
+    </details>
 
-    <fieldset class="demo-group">
-      <legend class="demo-group-title">Apariencia</legend>
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Selección</summary>
+      <fieldset class="demo-group-body" aria-label="Selección">
+        <label class="demo-field">
+          <span>Modo</span>
+          <select v-model="selectionMode">
+            <option value="cell">Celda</option>
+            <option value="row">Fila</option>
+            <option value="none">Ninguna</option>
+          </select>
+        </label>
 
-      <label class="demo-field">
-        <span>Tema</span>
-        <select v-model="theme">
-          <option value="light">Claro</option>
-          <option value="dark">Oscuro</option>
-          <option value="auto">Automático</option>
-        </select>
-      </label>
+        <p class="demo-field-note">{{ SELECTION_MODE_NOTES[selectionMode] }}</p>
 
-      <div class="demo-field demo-field--stacked">
-        <span>Color principal</span>
-        <div class="demo-swatches">
-          <button
-            v-for="preset in PRIMARY_PRESETS"
-            :key="preset.value"
-            type="button"
-            class="demo-swatch"
-            :class="{ 'demo-swatch--on': primaryColor === preset.value }"
-            :style="{ background: preset.value }"
-            :title="preset.label"
-            :aria-label="preset.label"
-            :aria-pressed="primaryColor === preset.value"
-            @click="primaryColor = preset.value"
-          />
-          <!--
-            El nativo, para cualquier otro color. Va al final porque es la
-            salida de escape, no la opción principal.
-          -->
-          <input
-            v-model="primaryColor"
-            type="color"
-            class="demo-swatch demo-swatch--picker"
-            aria-label="Elegir otro color"
-            title="Elegir otro color"
-          />
+        <label class="demo-field demo-field--inline">
+          <input v-model="selectionColumn" type="checkbox" />
+          <span>Casillas para marcar filas</span>
+        </label>
+
+        <!-- Los dos gestos en bloque producen un rango, y el rango solo existe en modo celda. -->
+        <label class="demo-field demo-field--inline" :class="{ 'demo-field--off': !cellMode }">
+          <input v-model="columnSelection" type="checkbox" :disabled="!cellMode" />
+          <span>Clic en el encabezado selecciona la columna</span>
+        </label>
+
+        <label
+          class="demo-field demo-field--inline"
+          :class="{ 'demo-field--off': !cellMode || !showRowNumbers }"
+        >
+          <input v-model="rowSelection" type="checkbox" :disabled="!cellMode || !showRowNumbers" />
+          <span>Clic en el número selecciona la fila</span>
+        </label>
+
+        <label class="demo-field demo-field--inline">
+          <input v-model="crosshair" type="checkbox" />
+          <span>Cruz de la celda activa</span>
+        </label>
+
+        <label class="demo-field demo-field--inline">
+          <input v-model="focusRing" type="checkbox" />
+          <span>Anillo de foco</span>
+        </label>
+      </fieldset>
+    </details>
+
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Columnas</summary>
+      <fieldset class="demo-group-body" aria-label="Columnas">
+        <label class="demo-field demo-field--inline">
+          <input v-model="columnReorder" type="checkbox" />
+          <span>Mover arrastrando el encabezado</span>
+        </label>
+
+        <label class="demo-field demo-field--inline">
+          <input v-model="columnAutoFit" type="checkbox" />
+          <span>Doble clic en el borde ajusta el ancho</span>
+        </label>
+
+        <label class="demo-field demo-field--inline">
+          <input v-model="headerGroups" type="checkbox" />
+          <span>Títulos de grupo</span>
+        </label>
+
+        <div class="demo-actions">
+          <DataTableColumnToggle v-model="columnVisibility" :columns="columns" label="Mostrar" />
+          <button type="button" class="demo-button" @click="emit('resetLayout')">
+            Restablecer
+          </button>
         </div>
-      </div>
+      </fieldset>
+    </details>
 
-      <label class="demo-field">
-        <span>Estilo</span>
-        <select v-model="variant">
-          <option value="default">Predeterminado</option>
-          <option value="cells">Celdas</option>
-          <option value="rows">Filas</option>
-        </select>
-      </label>
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Filas</summary>
+      <fieldset class="demo-group-body" aria-label="Filas">
+        <label class="demo-field">
+          <span>Agrupar</span>
+          <select v-model="groupingPreset">
+            <option v-for="preset in GROUPING_PRESETS" :key="preset.id" :value="preset.id">
+              {{ preset.label }}
+            </option>
+          </select>
+        </label>
 
-      <label class="demo-field">
-        <span>Redondeo</span>
-        <select v-model="radiusBorder">
-          <option value="none">Sin redondeo</option>
-          <option value="sm">sm</option>
-          <option value="md">md (tema)</option>
-          <option value="lg">lg</option>
-          <option value="xl">xl</option>
-        </select>
-      </label>
+        <div v-if="grouped" class="demo-actions">
+          <button type="button" class="demo-button" @click="emit('expandAll')">
+            Expandir todo
+          </button>
+          <button type="button" class="demo-button" @click="emit('collapseAll')">
+            Colapsar todo
+          </button>
+        </div>
 
-      <label class="demo-field demo-field--inline">
-        <input v-model="dense" type="checkbox" />
-        <span>Compacta</span>
-      </label>
+        <label class="demo-field">
+          <span>Alto</span>
+          <select v-model="rowHeightMode">
+            <option value="fija">Igual para todas</option>
+            <option value="prioridad">Según la prioridad</option>
+          </select>
+        </label>
 
-      <label class="demo-field">
-        <span>Alto de fila</span>
-        <select v-model="rowHeightMode">
-          <option value="fija">Igual para todas</option>
-          <option value="prioridad">Según la prioridad</option>
-        </select>
-      </label>
+        <label class="demo-field demo-field--inline">
+          <input v-model="showRowNumbers" type="checkbox" />
+          <span>Numeración</span>
+        </label>
+      </fieldset>
+    </details>
 
-      <p v-if="rowHeightMode === 'prioridad'" class="demo-field-note">
-        Crítica <strong>88px</strong>, alta <strong>64px</strong>, el resto el alto normal. Mira que
-        la selección, el editor y la regleta acompañan cada alto.
-      </p>
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Apariencia</summary>
+      <fieldset class="demo-group-body" aria-label="Apariencia">
+        <label class="demo-field">
+          <span>Tema</span>
+          <select v-model="theme">
+            <option value="light">Claro</option>
+            <option value="dark">Oscuro</option>
+            <option value="auto">Automático</option>
+          </select>
+        </label>
 
-      <!--
-        El MISMO componente que llena la barra `#toolbar` de la tabla, con el
-        mismo modelo. Los dos se mueven juntos porque son uno solo montado dos
-        veces, no dos copias del mismo marcado.
-      -->
-      <div class="demo-field">
-        <span>Zoom</span>
-        <DemoZoomStepper v-model="zoom" />
-      </div>
+        <label class="demo-field">
+          <span>Estilo</span>
+          <select v-model="variant">
+            <option value="default">Predeterminado</option>
+            <option value="cells">Celdas</option>
+            <option value="rows">Filas</option>
+          </select>
+        </label>
 
-      <p v-if="zoom !== 1" class="demo-field-note">
-        No es un <strong>transform</strong>: la tabla escala sus métricas, así que el arrastre de
-        selección y el borde de una columna siguen cayendo donde apunta el cursor. Ajusta un ancho
-        acá y vuelve al 100%: queda como lo dejaste.
-      </p>
+        <label class="demo-field">
+          <span>Redondeo</span>
+          <select v-model="radiusBorder">
+            <option value="none">Sin redondeo</option>
+            <option value="sm">sm</option>
+            <option value="md">md (tema)</option>
+            <option value="lg">lg</option>
+            <option value="xl">xl</option>
+          </select>
+        </label>
 
-      <div class="demo-actions">
-        <button type="button" class="demo-button" @click="emit('toggleFullscreen')">
-          {{ fullscreen ? 'Salir de pantalla completa' : 'Pantalla completa' }}
-        </button>
-      </div>
+        <label class="demo-field demo-field--inline">
+          <input v-model="dense" type="checkbox" />
+          <span>Compacta</span>
+        </label>
 
-      <p class="demo-field-note">
-        Usa la <strong>Fullscreen API</strong> del navegador, no un
-        <strong>position: fixed</strong>. Adentro queda a la vista la barra
-        <strong>#toolbar</strong> de la tabla, que acá lleva el mismo escalón de zoom y un botón
-        para salir. Sal también con <strong>Esc</strong>: la tabla lo detecta y este botón vuelve
-        solo.
-      </p>
-    </fieldset>
+        <div class="demo-field demo-field--stacked">
+          <span>Color principal</span>
+          <div class="demo-swatches">
+            <button
+              v-for="preset in PRIMARY_PRESETS"
+              :key="preset.value"
+              type="button"
+              class="demo-swatch"
+              :class="{ 'demo-swatch--on': primaryColor === preset.value }"
+              :style="{ background: preset.value }"
+              :title="preset.label"
+              :aria-label="preset.label"
+              :aria-pressed="primaryColor === preset.value"
+              @click="primaryColor = preset.value"
+            />
+            <input
+              v-model="primaryColor"
+              type="color"
+              class="demo-swatch demo-swatch--picker"
+              aria-label="Elegir otro color"
+              title="Elegir otro color"
+            />
+          </div>
+        </div>
+      </fieldset>
+    </details>
 
-    <fieldset class="demo-group">
-      <legend class="demo-group-title">Agrupación</legend>
+    <details class="demo-group" open>
+      <summary class="demo-group-title">Vista</summary>
+      <fieldset class="demo-group-body" aria-label="Vista">
+        <!-- El mismo control que va en la barra `#toolbar` de la tabla, con el mismo modelo. -->
+        <div class="demo-field">
+          <span>Zoom</span>
+          <DemoZoomStepper v-model="zoom" />
+        </div>
 
-      <label class="demo-field">
-        <span>Agrupar</span>
-        <select v-model="groupingPreset">
-          <option v-for="preset in GROUPING_PRESETS" :key="preset.id" :value="preset.id">
-            {{ preset.label }}
-          </option>
-        </select>
-      </label>
-
-      <div class="demo-actions">
-        <button type="button" class="demo-button" :disabled="!grouped" @click="emit('expandAll')">
-          Expandir todo
-        </button>
-        <button type="button" class="demo-button" :disabled="!grouped" @click="emit('collapseAll')">
-          Colapsar todo
-        </button>
-      </div>
-    </fieldset>
-
-    <fieldset class="demo-group">
-      <legend class="demo-group-title">Selección</legend>
-
-      <label class="demo-field">
-        <span>Modo</span>
-        <select v-model="selectionMode">
-          <option value="cell">Celda</option>
-          <option value="row">Fila</option>
-          <option value="none">Ninguna</option>
-        </select>
-      </label>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="columnSelection" type="checkbox" />
-        <span>Seleccionar columna</span>
-      </label>
-
-      <!--
-        Seleccionar una fila entera se hace presionando su número, así que sin
-        regleta el gesto no tiene dónde ocurrir. El control se deshabilita en
-        lugar de ocultarse: comunica la dependencia en vez de desaparecer.
-      -->
-      <label class="demo-field demo-field--inline">
-        <input v-model="rowSelection" type="checkbox" :disabled="!showRowNumbers" />
-        <span>Seleccionar fila</span>
-      </label>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="focusRing" type="checkbox" />
-        <span>Anillo de foco</span>
-      </label>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="crosshair" type="checkbox" />
-        <span>Cruz de la celda activa</span>
-      </label>
-
-      <p v-if="crosshair" class="demo-field-note">
-        Una línea bajo el encabezado de la columna y otra al costado del número de fila. Marca una
-        celda y scrollea lejos: las dos siguen a la vista.
-        <template v-if="selectionMode === 'row'">
-          En modo fila solo ves la horizontal: ahí lo elegido es la fila entera y no hay ninguna
-          columna que marcar.
-        </template>
-      </p>
-    </fieldset>
-
-    <fieldset class="demo-group">
-      <legend class="demo-group-title">Columnas</legend>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="showRowNumbers" type="checkbox" />
-        <span>Numeración</span>
-      </label>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="selectionColumn" type="checkbox" />
-        <span>Casillas de selección</span>
-      </label>
-
-      <label class="demo-field">
-        <span>Esperando datos</span>
-        <select v-model="loading">
-          <option :value="false">No</option>
-          <option value="skeleton">Con esqueleto</option>
-          <option value="blank">Sin mostrar nada</option>
-        </select>
-      </label>
-
-      <p v-if="loading === 'skeleton'" class="demo-field-note">
-        Una barra por celda, en la posición de SU columna. En modo servidor, una página que aún no
-        llegó ya se pinta así ella sola; esto lo enciende a mano para la primera carga o una
-        reconsulta.
-      </p>
-      <p v-else-if="loading === 'blank'" class="demo-field-note">
-        Ni esqueleto ni mensaje ni los datos anteriores: el cuerpo queda vacío. Para cuando el
-        indicador de carga lo pones tú y dos señales a la vez se leerían como un error.
-      </p>
-
-      <p v-if="selectionColumn" class="demo-field-note">
-        Lo marcado se guarda por CLAVE de fila, no por posición: filtra, quita el filtro y vuelve
-        marcado. La casilla del encabezado marca las
-        {{ dataSource === 'server' ? 'filas del servidor entero' : 'filas de la tabla' }}, no solo
-        las que se ven.
-      </p>
-
-      <label class="demo-field demo-field--inline">
-        <input v-model="columnReorder" type="checkbox" />
-        <span>Mover columnas</span>
-      </label>
-
-      <div class="demo-actions">
-        <DataTableColumnToggle v-model="columnVisibility" :columns="columns" label="Columnas" />
-        <button type="button" class="demo-button" @click="emit('resetLayout')">
-          Restablecer layout
-        </button>
-      </div>
-    </fieldset>
+        <div class="demo-actions">
+          <button type="button" class="demo-button" @click="emit('toggleFullscreen')">
+            {{ fullscreen ? 'Salir de pantalla completa' : 'Pantalla completa' }}
+          </button>
+        </div>
+      </fieldset>
+    </details>
   </div>
 </template>

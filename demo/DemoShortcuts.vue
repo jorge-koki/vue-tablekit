@@ -33,14 +33,33 @@
 
       <p>
         <strong>Editar.</strong> Doble clic, <kbd>Enter</kbd> o <kbd>F2</kbd>, o directamente
-        empezar a escribir. <kbd>Esc</kbd> descarta la edición y conserva la selección.
+        empezar a escribir. <kbd>Esc</kbd> descarta la edición y conserva la selección. Un proyecto
+        sin nombre o un presupuesto negativo se rechazan: el editor queda abierto con el motivo. Las
+        etiquetas se editan con casillas: <kbd>↓</kbd> <kbd>↑</kbd> y <kbd>Espacio</kbd>.
       </p>
 
       <p>
-        <strong>Seleccionar un bloque.</strong> Arrastrar desde una celda, o <kbd>Shift</kbd>+clic,
-        o <kbd>Shift</kbd> con las flechas; <kbd>Ctrl</kbd>+<kbd>A</kbd> selecciona todo. Con
+        <strong>Vaciar, pegar, deshacer.</strong> <kbd>Supr</kbd> vacía la selección;
+        <kbd>Ctrl</kbd>+<kbd>V</kbd> pega lo copiado de esta tabla o de una hoja de cálculo;
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace el último gesto y <kbd>Ctrl</kbd>+<kbd>Y</kbd> lo
+        rehace.
+      </p>
+
+      <p>
+        <strong>Seleccionar un bloque.</strong> Arrastrar desde una celda —llevar el puntero fuera
+        de la tabla la desplaza—, o <kbd>Shift</kbd>+clic, o <kbd>Shift</kbd> con las flechas;
+        <kbd>Ctrl</kbd>+clic suma otro bloque; <kbd>Ctrl</kbd>+<kbd>A</kbd> selecciona todo. Con
         <kbd>Ctrl</kbd>+<kbd>C</kbd> el bloque va al portapapeles con el texto que se ve —la
         etiqueta del estado, el importe con separadores— y se pega derecho en una hoja de cálculo.
+      </p>
+
+      <p>
+        <strong>Ancho de columna.</strong> Desde una celda, <kbd>Alt</kbd>+<kbd>Shift</kbd> con
+        <kbd>←</kbd> o <kbd>→</kbd> achica o agranda su columna y entra al modo ancho: ahí
+        <kbd>←</kbd> <kbd>→</kbd> siguen de a 10px, con <kbd>Shift</kbd> de a 50,
+        <kbd>Inicio</kbd> / <kbd>Fin</kbd> van al mínimo y al máximo, <kbd>Enter</kbd> confirma y
+        <kbd>Esc</kbd> deshace. Con el mouse, doble clic sobre el borde derecho de un encabezado
+        ajusta la columna a su contenido.
       </p>
 
       <p>

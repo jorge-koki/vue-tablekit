@@ -82,6 +82,36 @@ export const MIN_COLUMN_WIDTH = 32
 export const MAX_COLUMN_WIDTH = 4000
 
 /**
+ * Cuánto cambia el ancho de una columna cada flecha del modo ancho, en px BASE.
+ *
+ * Base y no de pantalla por lo mismo que el arrastre: es lo que se guarda, y al
+ * 200% una flecha tiene que seguir sumando 10 al ancho guardado, no 20.
+ */
+export const KEYBOARD_RESIZE_STEP = 10
+
+/** El paso de `Shift`+flecha en el modo ancho, en px base. */
+export const KEYBOARD_RESIZE_STEP_LARGE = 50
+
+/**
+ * Franja interior, pegada a cada borde del cuerpo, donde arrastrar un rango ya
+ * desplaza la tabla, en px de pantalla.
+ *
+ * Fuera de la tabla el auto-scroll arranca siempre; esta franja existe para
+ * cuando no hay "fuera": una tabla en pantalla completa, o pegada al borde de la
+ * ventana, donde el puntero no puede pasar del último píxel.
+ */
+export const AUTOSCROLL_EDGE = 12
+
+/**
+ * Tope de lo que avanza el auto-scroll por frame, en px de pantalla.
+ *
+ * La velocidad crece con la distancia del puntero al borde —la mitad de esa
+ * distancia por frame— hasta este tope: unas 60 filas por segundo con las filas
+ * de 40px, rápido sin perder de vista lo que pasa.
+ */
+export const AUTOSCROLL_MAX_STEP = 40
+
+/**
  * Banda dentro de la que se acota el ancho CUADRADO de la regleta, en px.
  *
  * La regleta tiende al cuadrado —tan ancha como alta es la fila—, que es lo que

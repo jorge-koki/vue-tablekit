@@ -43,14 +43,17 @@ const columnas: DataTableColumn<Empleado>[] = [
 
 ## Qué sabe hacer
 
-- Navegación por teclado completa y **selección de bloques** que se copian con `Ctrl`+`C` y se pegan
-  en Excel.
-- **Edición en línea** cancelable. La tabla nunca escribe en tus datos.
+- Navegación por teclado completa y **selección de bloques** —uno o varios, con `Ctrl`+clic— que se
+  copian con `Ctrl`+`C` y se pegan en Excel, y **pegado desde Excel** con `Ctrl`+`V`.
+- **Edición en línea** cancelable, con **validación**, **deshacer y rehacer**, `Supr` para vaciar y un
+  editor de listas. La tabla nunca escribe en tus datos: te dice qué cambió, y `applyEdits` lo aplica
+  en una línea.
 - **Ordenamiento** por una o varias columnas. La tabla lleva el estado y tú ordenas —o le preguntas
   al servidor—, que es lo que hace que funcione igual con mil filas que con un millón.
 - **Agrupación multinivel** con totales, promedios, conteos, mínimos y máximos.
-- **Columnas anclables, redimensionables, ocultables y reordenables**, con el layout guardado y un
-  menú propio en cada encabezado si lo quieres.
+- **Columnas anclables, redimensionables —también con el teclado, o al contenido con un doble
+  clic—, ocultables y reordenables**, con el layout guardado, títulos de grupo que abarcan varias
+  columnas y un menú propio en cada encabezado si lo quieres.
 - **Alturas de fila distintas**, decididas por ti fila por fila.
 - **Zoom del 50% al 200%**, como el de una hoja de cálculo. Escala las métricas en vez de transformar
   píxeles, así que el puntero sigue cayendo donde apuntas y los anchos guardados no se inflan.
