@@ -7,10 +7,71 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
-## [Sin publicar]
+## [0.4.0] — 2026-09-22
+
+Sube la **minor** porque cambian contratos que ya existían —ver **Cambiado**—: `CellValue` admite
+listas y `beforeEdit` corre por cualquier vía que escribe.
 
 ### Agregado
 
+- **Redimensionar columnas con el teclado: el modo ancho.** Sobre una celda de una columna con
+  `resizable`, `Alt`+`Shift`+`←` / `→` la achica o la agranda 10px y pasa el foco al tirador.
+  Ahí `←` / `→` siguen de a 10px, `Shift` de a 50, `Inicio` y `Fin` van a `minWidth` y
+  `maxWidth`, `Enter` confirma y `Escape` vuelve al ancho de antes; en los dos casos el teclado
+  regresa a la celda. Es el mismo ancho que el del arrastre —mismo acotado, píxeles base, se
+  persiste— y `columnResize` sale una vez al confirmar, con el cambio neto. La grilla sigue
+  teniendo una sola parada de `Tab`: fuera del modo el tirador no es enfocable. Dentro, es un
+  `separator` con `aria-valuenow`, `aria-valuemin`, `aria-valuemax`, `aria-valuetext` y un
+  nombre que se traduce con el nuevo `labels.resizeColumn`.
+- **Doble clic sobre el tirador: la columna se ajusta a su contenido.** Mide el encabezado, las
+  celdas y los agregados pintados y, con los renderers `text` y `number`, el texto de todas las
+  filas del dataset y no solo de las que se ven: el valor más largo casi nunca está en pantalla. Los
+  textos se ordenan con `measureText` y solo los más anchos se miden en el DOM. Pasa por el mismo
+  acotado que el arrastre, guarda píxeles base y anuncia un solo `columnResize`, solo si el ancho
+  cambió. Viene encendido en toda columna con `resizable`; la prop nueva `columnAutoFit` lo apaga.
+- **Arrastrar un rango fuera de la tabla la desplaza.** Por encima, por debajo o a los costados del
+  cuerpo —y en una franja de 12px por dentro de cada borde, para la pantalla completa—, la tabla se
+  mueve hacia ese lado y el rango sigue creciendo hasta la celda del borde. Más rápido cuanto más
+  lejos está el puntero, con tope. Antes el rango se quedaba quieto en cuanto el puntero salía del
+  viewport. Rige donde rige el rango: no hay nada que encender.
+- **Escribir en varias celdas: `cellsCommit` y `applyEdits`.** Los gestos que escriben más de una
+  celda —vaciar, pegar, deshacer, rehacer— llegan en UN evento por gesto, `cellsCommit`, con `source`
+  y la lista de cambios, cada uno con la forma de un `editCommit`. `applyEdits(rows, changes)` los
+  aplica con una sola copia del array: un `editCommit` por celda obligaría a copiarlo una vez por
+  celda, y vaciar una columna de cien mil filas congelaría la página.
+- **Vaciar con `Supr` o `Retroceso`.** Vacía la celda activa, el rango o todos los rangos. Cada celda
+  queda con lo que dejaría su editor al borrarlo todo: `''`, `null`, `false` o `[]`. Pasa por
+  `editable`, `beforeEdit` y `validate`, como cualquier edición.
+- **Pegar con `Ctrl`+`V`.** Pega un bloque con tabuladores desde la esquina de la selección,
+  recortado por el borde de la tabla, y lo repite si la selección es un múltiplo exacto. Cada texto
+  se lee según el editor de la columna —números con miles y moneda, fechas, casillas, opciones por
+  valor o por etiqueta, listas— y la opción nueva `column.parse` puede reemplazar esa lectura. Lo que
+  no se puede leer queda afuera y se anuncia con `editInvalid`. Al terminar, lo pegado queda
+  seleccionado.
+- **Deshacer y rehacer con `Ctrl`+`Z` y `Ctrl`+`Y`** —o `Ctrl`+`Shift`+`Z`, y `Cmd` en un Mac—. La
+  tabla recuerda cada gesto que anunció y lo revierte como un `cellsCommit`, pero solo en las celdas
+  que todavía tienen el valor anunciado: lo que el padre no aplicó, o lo que cambió después, no se
+  pisa. Con `rowKey`, sobrevive a un reordenamiento. Prop `undoLimit` (100; `0` lo apaga) y métodos
+  `undo()`, `redo()`, `canUndo()`, `canRedo()` —reactivos— y `clearHistory()`.
+- **Validar un valor: `column.validate`.** Devuelve un mensaje —o `false`, que usa el nuevo
+  `labels.invalidValue`— para rechazar un valor. Con `Enter` el editor queda abierto, en rojo y con
+  el mensaje debajo de la celda (`aria-invalid`, `role="alert"`); al salir de la celda lo escrito se
+  descarta; en un lote la celda queda afuera. El editor de slot recibe el mensaje en la prop nueva
+  `error`. Cada rechazo se anuncia con el evento nuevo `editInvalid`.
+- **Editor de listas: `editor: 'tags'`**, inferido de un valor que es una lista o del renderer
+  `tags`. La lista se escribe separada por comas, con las etiquetas de las opciones, y llega como
+  array. Si la columna declara `options`, un panel de casillas debajo del input la escribe sin
+  teclear: `↓`/`↑` recorren, `Espacio` marca, `Enter` confirma. El input hace de `combobox` con
+  `aria-activedescendant`, así el foco nunca sale de él.
+- **Varios rangos con `Ctrl`+clic** —o `Cmd`+clic—. Suma un rango en lugar de reemplazar la
+  selección; lo que viene después extiende el nuevo. Todos se tiñen y se recuadran, `Supr` los vacía
+  en un lote, y `Ctrl`+`C` los copia juntos si comparten columnas o filas —si no, solo el vigente,
+  como Excel—. `rangeSelect` lleva el campo nuevo `ranges`.
+- **Encabezados agrupados: `column.headerGroup`.** Las columnas visibles y contiguas con el mismo
+  título lo comparten, en una fila por encima de la de títulos. Se rearma solo al ocultar, mover o
+  anclar columnas. Prop `headerGroupHeight` (por defecto, el alto del encabezado). Con
+  `columnSelection`, un clic en el título selecciona sus columnas. La fila de grupos es la fila 1
+  para ARIA, con `aria-colspan`.
 - **Zoom del 50% al 200%, con `v-model:zoom`.** Es un factor y no un porcentaje: el 125% se pide
   como `1.25`. Escala las métricas resueltas del layout —alto de fila, alto de encabezado, anchos de
   columna, regleta y tipografía— en lugar de aplicar un `transform`, que dejaría al puntero
@@ -29,6 +90,22 @@ como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo
   tabla a pantalla completa, donde los controles de alrededor quedan del otro lado. Sin el slot no se
   renderiza ningún nodo.
 
+### Cambiado
+
+Estos cambios tocan contratos que ya existían.
+
+- **`CellValue` admite listas**: `CellValueList`, un array de textos y números. Antes una lista se
+  convertía a texto (`'a,b'`) antes de llegar a `format`, `cellClass` o los eventos; ahora llega como
+  array. Los ids de grupo de una columna de listas no cambian, así que lo guardado sigue valiendo. Un
+  consumidor que trataba `CellValue` como exhaustivo puede necesitar una rama más.
+- **`beforeEdit` corre por cualquier vía que escribe**, no solo al abrir el editor, y lleva `source`.
+  Un listener que solo quería contar aperturas del editor tiene que filtrar por
+  `source === 'editor'`.
+- **`CellEditorType` suma `'tags'`**, y la inferencia del editor lo pone antes que `select`: una
+  columna de listas con `options` ya no se infiere como un desplegable de una opción.
+- **Con grupos de columnas, `--dt-header-height` es el alto de las dos filas** y `aria-rowindex` se
+  corre en uno. Sin grupos, nada cambia.
+
 ### Corregido
 
 - **`DataTableLabels` y `SelectionColumnOptions` se exportan.** Estaban documentados como
@@ -37,14 +114,18 @@ como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo
 
 ### Documentación
 
+- **La documentación de la librería se reescribió** —de unas 5.000 a unas 1.900 líneas—, ordenada por
+  tema y directa: qué hace cada prop, evento, método, campo y tecla, sin los ensayos de diseño. Cubre
+  toda la API pública.
 - `aria-sort` se documentaba como ausente "porque no hay ordenamiento". Lo llevan las columnas con
   `sortable` desde la 0.2.0.
 - `rowKey` figuraba como obligatoria. Es opcional desde la 0.3.0.
 - Cinco eventos y los helpers de selección, que eran API pública, no figuraban en ningún lado.
-- La tabla de limitaciones suma lo que faltaba sin decirse: vaciar con `Supr`, rechazar un valor al
-  confirmar la edición, deshacer, redimensionar con el teclado, autoajustar el ancho, encabezados
-  agrupados, fila de totales, detalle por fila, datos en árbol, reordenar filas, menú contextual,
-  exportar, `dir="rtl"`, la celda activa para lectores de pantalla y las pantallas táctiles.
+- La tabla de limitaciones suma lo que faltaba sin decirse: fila de totales, detalle por fila,
+  datos en árbol, reordenar filas, menú contextual, exportar, `dir="rtl"`, la celda activa para
+  lectores de pantalla y las pantallas táctiles.
+- La demo escribía en la fila equivocada al editar con la tabla ordenada: usaba el índice del array
+  ordenado para escribir en el original. Ahora traduce el índice, también para los lotes.
 
 ## [0.3.2] — 2026-09-19
 
