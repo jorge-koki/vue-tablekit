@@ -51,7 +51,7 @@ const columnas: DataTableColumn<Empleado>[] = [
 - **Agrupación multinivel** con totales, promedios, conteos, mínimos y máximos.
 - **Columnas anclables, redimensionables, ocultables y reordenables**, con el layout guardado y un
   menú propio en cada encabezado si lo quieres.
-- **Alturas de fila distintas**, decididas por tú fila por fila.
+- **Alturas de fila distintas**, decididas por ti fila por fila.
 - **Zoom del 50% al 200%**, como el de una hoja de cálculo. Escala las métricas en vez de transformar
   píxeles, así que el puntero sigue cayendo donde apuntas y los anchos guardados no se inflan.
 - **Pantalla completa** con la Fullscreen API del navegador, no con un `position: fixed` que

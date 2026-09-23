@@ -7,6 +7,45 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
+## [Sin publicar]
+
+### Agregado
+
+- **Zoom del 50% al 200%, con `v-model:zoom`.** Es un factor y no un porcentaje: el 125% se pide
+  como `1.25`. Escala las métricas resueltas del layout —alto de fila, alto de encabezado, anchos de
+  columna, regleta y tipografía— en lugar de aplicar un `transform`, que dejaría al puntero
+  apuntando a una celda y a la tabla seleccionando otra. Lo que se guarda sigue en píxeles **base**:
+  `column.width`, `columnWidths`, el layout persistido y los anchos que informa `columnResize` no se
+  enteran del factor, así que ajustar una columna al 150% no la infla al volver al 100%. Un valor
+  fuera de `[0.5, 2]` se acota y uno que no es un número finito y positivo vuelve a `1`; en los dos
+  casos se emite `update:zoom` con el efectivo. El zoom **no se persiste**.
+- **Pantalla completa con `v-model:fullscreen`**, `enterFullscreen()` y `exitFullscreen()`. Usa la
+  Fullscreen API nativa sobre `.dt-root` y no un `position: fixed`, que cualquier ancestro con
+  `transform` encierra en su panel. Cuando el navegador sale por su cuenta —`Esc`, `F11`— o rechaza
+  el pedido por falta de un gesto del usuario, se emite `update:fullscreen` con `false` para que el
+  modelo no quede diciendo otra cosa. `exitFullscreen()` solo sale si la que está en pantalla
+  completa es esta tabla.
+- **Slot `#toolbar`**: una barra por encima del cuerpo que llena el consumidor y que viaja con la
+  tabla a pantalla completa, donde los controles de alrededor quedan del otro lado. Sin el slot no se
+  renderiza ningún nodo.
+
+### Corregido
+
+- **`DataTableLabels` y `SelectionColumnOptions` se exportan.** Estaban documentados como
+  importables, pero `src/index.ts` no los re-exportaba, así que el import del README no compilaba en
+  el proyecto del consumidor.
+
+### Documentación
+
+- `aria-sort` se documentaba como ausente "porque no hay ordenamiento". Lo llevan las columnas con
+  `sortable` desde la 0.2.0.
+- `rowKey` figuraba como obligatoria. Es opcional desde la 0.3.0.
+- Cinco eventos y los helpers de selección, que eran API pública, no figuraban en ningún lado.
+- La tabla de limitaciones suma lo que faltaba sin decirse: vaciar con `Supr`, rechazar un valor al
+  confirmar la edición, deshacer, redimensionar con el teclado, autoajustar el ancho, encabezados
+  agrupados, fila de totales, detalle por fila, datos en árbol, reordenar filas, menú contextual,
+  exportar, `dir="rtl"`, la celda activa para lectores de pantalla y las pantallas táctiles.
+
 ## [0.3.2] — 2026-09-19
 
 ### Agregado
