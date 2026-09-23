@@ -4767,6 +4767,10 @@ function exitFullscreen(): void {
  */
 function onFullscreenChange(): void {
   syncFullscreen(rootIsFullscreen())
+  // El cambio de capa reacomoda el viewport, y el navegador puede mover su
+  // scroll sin despachar `scroll`. Sin releerlo, la ventana virtual queda
+  // pintando la posición vieja hasta el próximo scroll del usuario.
+  scroll.resync()
 }
 
 /**

@@ -54,6 +54,14 @@ export interface UseScrollSyncReturn {
   scrollTo(position: { top?: number; left?: number }): void
   /** Vuelve a medir el viewport. Fuerza layout, por eso no se llama por frame. */
   measure(): void
+  /**
+   * Relee tamaño Y posición del viewport y agenda un frame.
+   *
+   * Para los cambios de layout que el navegador resuelve sin avisar por
+   * `scroll`, como la salida de pantalla completa. Fuerza layout: es para
+   * eventos raros, no para el camino caliente.
+   */
+  resync(): void
 }
 
 /**
@@ -152,8 +160,8 @@ export function useScrollSync(options: UseScrollSyncOptions): UseScrollSyncRetur
     const element = options.viewport.value
     if (!element) return
     // `clientWidth` / `clientHeight` sí fuerzan layout. Por eso esta función se
-    // llama solo al montar; después las medidas llegan por ResizeObserver, que
-    // las entrega ya calculadas.
+    // llama solo al montar y desde `resync`, en eventos raros; el resto de las
+    // medidas llegan por ResizeObserver, que las entrega ya calculadas.
     live.viewportWidth = element.clientWidth
     live.viewportHeight = element.clientHeight
   }
@@ -167,6 +175,20 @@ export function useScrollSync(options: UseScrollSyncOptions): UseScrollSyncRetur
     // evento nativo y `handleScroll` se encarga.
   }
 
+  /**
+   * Relee la posición del scroll sin esperar al evento.
+   *
+   * Un cambio de layout puede mover `scrollTop` sin despachar `scroll`: al salir
+   * de pantalla completa el navegador reajusta la posición del viewport y el
+   * evento no siempre llega. Con `live` atrasado, la ventana virtual pinta las
+   * filas de la posición vieja y deja vacía la franja que se ve, hasta que el
+   * primer scroll del usuario lo corrige.
+   */
+  function readScrollPosition(element: HTMLElement): void {
+    live.scrollTop = element.scrollTop
+    live.scrollLeft = element.scrollLeft
+  }
+
   function handleResize(entries: readonly ResizeObserverEntry[]): void {
     const entry = entries[0]
     if (!entry) return
@@ -175,6 +197,18 @@ export function useScrollSync(options: UseScrollSyncOptions): UseScrollSyncRetur
     // que el layout acaba de correr.
     live.viewportWidth = entry.contentRect.width
     live.viewportHeight = entry.contentRect.height
+    // El callback del observer corre con el layout recién resuelto, así que
+    // leer la posición acá no fuerza nada.
+    const element = options.viewport.value
+    if (element) readScrollPosition(element)
+    requestFrame()
+  }
+
+  function resync(): void {
+    const element = options.viewport.value
+    if (!element) return
+    measure()
+    readScrollPosition(element)
     requestFrame()
   }
 
@@ -210,5 +244,5 @@ export function useScrollSync(options: UseScrollSyncOptions): UseScrollSyncRetur
     }
   })
 
-  return { live, state, requestFrame, scrollTo, measure }
+  return { live, state, requestFrame, scrollTo, measure, resync }
 }

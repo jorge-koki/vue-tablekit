@@ -799,3 +799,50 @@ describe('el botón de salida — lo pone el consumidor, no la librería', () =>
     consumidor.harness.unmount()
   })
 })
+
+/* ------------------------------------------- El scroll que se movió en silencio */
+
+/**
+ * Mueve el scroll del viewport SIN despachar `scroll`.
+ *
+ * Es lo que hace el navegador en la transición de salida: el layout cambia, la
+ * posición se reajusta y el evento no siempre llega. La ventana virtual que se
+ * calcula con el `scrollTop` viejo pinta filas que ya no están a la vista y deja
+ * vacía la franja que sí lo está.
+ *
+ * Reemplaza la emulación del andamiaje hasta el final del test: desde acá, un
+ * `scrollTo` no mueve nada. Cada test que lo use tiene que desmontar al terminar.
+ */
+function moveScrollSilently(harness: TableHarness, top: number): void {
+  Object.defineProperty(harness.viewport, 'scrollTop', {
+    configurable: true,
+    get: () => top,
+    set: () => {},
+  })
+}
+
+describe('pantalla completa — la ventana sigue al scroll real al salir', () => {
+  it('rereads the scroll position when the viewport resizes', async () => {
+    const harness = await mountGrid()
+
+    moveScrollSilently(harness, 50 * ROW_HEIGHT)
+    await resizeViewport(harness, { width: VIEWPORT.width, height: 200 })
+
+    expect(harness.cell(50, 'id')).not.toBeNull()
+    expect(harness.cell(0, 'id')).toBeNull()
+    harness.unmount()
+  })
+
+  it('rereads the scroll position when the document leaves fullscreen', async () => {
+    const harness = await mountGrid({ fullscreen: true })
+    await harness.flush()
+
+    moveScrollSilently(harness, 50 * ROW_HEIGHT)
+    fullscreen.exitFromBrowser()
+    await harness.flush()
+
+    expect(harness.cell(50, 'id')).not.toBeNull()
+    expect(harness.cell(0, 'id')).toBeNull()
+    harness.unmount()
+  })
+})
