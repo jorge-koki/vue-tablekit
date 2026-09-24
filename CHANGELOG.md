@@ -7,6 +7,18 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
+## [0.4.1] — 2026-09-23
+
+### Corregido
+
+- **La tabla ya no queda vacía ni sin responder al salir de pantalla completa.** Al cambiar de capa,
+  el navegador puede mover el scroll del viewport sin despachar `scroll`, y la ventana virtual se
+  seguía calculando con la posición vieja: las filas se pintaban fuera de la vista, la franja
+  visible quedaba en blanco y los clics no encontraban celdas hasta el siguiente scroll. Ahora cada
+  cambio de tamaño del viewport relee también la posición, y `fullscreenchange` vuelve a medir el
+  viewport y a leerla. Cubre la entrada a pantalla completa y cualquier otro cambio de tamaño, como
+  redimensionar la ventana o colapsar un panel lateral.
+
 ## [0.4.0] — 2026-09-22
 
 Sube la **minor** porque cambian contratos que ya existían —ver **Cambiado**—: `CellValue` admite
