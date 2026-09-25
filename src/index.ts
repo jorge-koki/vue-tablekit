@@ -59,6 +59,7 @@ export type {
   EditCommitEvent,
   EditInvalidEvent,
   EditSource,
+  FillHandleMode,
   FlatRow,
   GroupByState,
   GroupIdSegment,

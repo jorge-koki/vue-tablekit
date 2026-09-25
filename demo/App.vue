@@ -20,6 +20,7 @@ import type {
   DataTableVariant,
   EditCommitEvent,
   EditInvalidEvent,
+  FillHandleMode,
   GroupToggleEvent,
   RangeCopyEvent,
   RangeSelectEvent,
@@ -447,6 +448,9 @@ function onGroupToggle(event: GroupToggleEvent): void {
 
 const selectionMode = shallowRef<SelectionMode>('cell')
 
+/** El tirador de relleno arranca apagado, igual que en el componente. */
+const fillHandle = shallowRef<FillHandleMode>('none')
+
 /**
  * Celda activa, controlada por el padre.
  *
@@ -636,6 +640,7 @@ function onCellsCommit(event: CellsCommitEvent<ProjectRow>): void {
   const gesture = {
     clear: 'vaciado',
     paste: 'pegado',
+    fill: 'relleno',
     undo: 'deshecho',
     redo: 'rehecho',
   }[event.source]
@@ -736,6 +741,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:fullscreen="fullscreen"
             v-model:grouping-preset="groupingPreset"
             v-model:selection-mode="selectionMode"
+            v-model:fill-handle="fillHandle"
             v-model:column-selection="columnSelection"
             v-model:row-selection="rowSelection"
             v-model:focus-ring="focusRing"
@@ -797,6 +803,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             v-model:fullscreen="fullscreen"
             :row-height="rowHeight"
             :selection-mode="selectionMode"
+            :fill-handle="fillHandle"
             :focus-ring="focusRing"
             :crosshair="crosshair"
             column-menu

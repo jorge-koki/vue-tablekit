@@ -1793,9 +1793,10 @@
 /*
  * El cuadradito de la esquina inferior derecha.
  *
- * Hoy es una marca de extremo y nada más: señala dónde termina el rango, que es
- * lo que lo vuelve legible de un vistazo cuando el borde inferior queda fuera de
- * la pantalla. No arrastra.
+ * Esta es la marca de extremo, la que NO arrastra: señala dónde termina el
+ * rango, que es lo que lo vuelve legible de un vistazo cuando el borde inferior
+ * queda fuera de la pantalla. Con el tirador de relleno disponible se apaga y el
+ * tirador ocupa su lugar —ver `.dt-fill-handle`—.
  *
  * El borde del color del fondo lo separa del contenido de la celda que tiene
  * debajo, para que no se lea como parte del dato.
@@ -1815,6 +1816,74 @@
   height: 6px;
   border: 1px solid var(--dt-bg);
   background: var(--dt-primary);
+}
+
+.dt-range-box--handle::after {
+  content: none;
+}
+
+/*
+ * Tirador de relleno: el cuadradito de la esquina, cuando SÍ arrastra.
+ *
+ * Es un nodo propio y no el `::after` del recuadro porque tiene que existir
+ * también con UNA celda seleccionada, donde no hay recuadro, y porque es lo único
+ * de esta capa que recibe el puntero.
+ *
+ * Ocupa exactamente el lugar de la marca de extremo, para que prenderlo no mueva
+ * nada: 8px sobre la esquina, 7 hacia adentro y 1 hacia afuera. Casi todo hacia
+ * adentro a propósito: un nodo que sobresale del contenido agranda lo que se
+ * puede scrollear, y en la última fila o la última columna eso sería una franja
+ * de scroll que no lleva a ningún lado. El área que se agarra —el `::before`— es
+ * más grande que lo que se ve, y crece solo hacia adentro por lo mismo.
+ */
+.dt-fill-handle {
+  position: absolute;
+  /* Coordenadas del canvas, que empieza debajo del encabezado. */
+  top: var(--dt-header-height);
+  left: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  margin: -7px 0 0 -7px;
+  border: 1px solid var(--dt-bg);
+  background: var(--dt-primary);
+  cursor: crosshair;
+  /* Sin esto, en una pantalla táctil arrastrar el tirador scrollearía la tabla. */
+  touch-action: none;
+  will-change: transform;
+}
+
+.dt-fill-handle::before {
+  content: '';
+  position: absolute;
+  inset: -5px -1px -1px -5px;
+}
+
+/*
+ * El contorno de lo que se va a rellenar, mientras dura el arrastre.
+ *
+ * Punteado para que no se confunda con la selección, que sigue siendo la de
+ * antes: es lo que va a pasar al soltar, no algo que ya pasó.
+ */
+.dt-fill-box {
+  position: absolute;
+  top: var(--dt-header-height);
+  left: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  border: var(--dt-selection-width) dashed var(--dt-primary);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/*
+ * Mientras se rellena, la cruz acompaña al puntero por toda la tabla: sin esto
+ * cambiaría a la flecha en cuanto sale del tirador, que es enseguida.
+ */
+.dt-root[data-filling='true'],
+.dt-root[data-filling='true'] * {
+  cursor: crosshair;
 }
 
 /*

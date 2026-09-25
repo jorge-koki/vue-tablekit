@@ -7,6 +7,25 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
+## [Sin publicar]
+
+### Agregado
+
+- **Tirador de relleno.** Con la nueva prop `fillHandle`, el cuadradito de la esquina inferior
+  derecha de la selección se arrastra, como en Excel: copia lo seleccionado sobre las celdas que
+  recorre el puntero. Una celda se repite y un bloque se repite como patrón. Tiene dos modos:
+  `'axis'` rellena en un eje, como Excel, y `'area'` rellena el rectángulo hasta el puntero,
+  también en diagonal. Viene apagado (`'none'`). Llega en un `cellsCommit` con el nuevo
+  `source: 'fill'`, pasa por `editable`, `beforeEdit` y `validate`, se deshace con `Ctrl`+`Z` y
+  `Esc` lo cancela antes de soltar. Un contorno punteado muestra lo que se va a escribir y el
+  arrastre desplaza la tabla al salir de ella. Tipo `FillHandleMode`, clases `.dt-fill-handle` y
+  `.dt-fill-box`, atributo `data-filling`.
+
+### Cambiado
+
+- `EditSource` y `BatchEditSource` suman `'fill'`. Un `switch` exhaustivo sobre `event.source`
+  —o un objeto indexado por él— necesita el caso nuevo.
+
 ## [0.4.1] — 2026-09-23
 
 ### Corregido

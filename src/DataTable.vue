@@ -88,7 +88,7 @@ import {
   textRenderer,
 } from './internal/renderers'
 import { EMPTY_GROUP_LABEL } from './internal/aggregations'
-import { buildRangeText, parseClipboardText } from './internal/clipboard'
+import { buildRangeText, cellText, parseClipboardText } from './internal/clipboard'
 import {
   cellValuesEqual,
   clamp,
@@ -171,6 +171,9 @@ const props = withDefaults(defineProps<DataTableProps<TRow>>(), {
   bordered: false,
   selectionMode: 'cell',
   rangeSelection: true,
+  // Apagado: es un gesto que ESCRIBE, y una tabla que no lo espera no debería
+  // ofrecerlo. El consumidor elige el modo al encenderlo.
+  fillHandle: 'none',
   undoLimit: 100,
   // Apagado por defecto: con una celda marcada, el anillo del viewport es una
   // segunda señal para la misma posición y encierra toda la tabla en un borde de
@@ -1245,10 +1248,13 @@ const pool = useRowPool<TRow>({
     else selectCell(position)
   },
   onCellDragOver: (position) => {
-    cellRange.extendTo(position)
+    dragOver(position)
   },
   onDragMove: (clientX, clientY, overCell) => onSelectionDragMove(clientX, clientY, overCell),
-  onDragEnd: () => stopAutoScroll(),
+  onDragEnd: (canceled) => {
+    stopAutoScroll()
+    finishFill(canceled)
+  },
   onRowNumberPointerDown: (rowIndex) => {
     if (props.selectionMode === 'none') return
     // El foco va al viewport igual que con un clic en una celda: después de
@@ -1465,6 +1471,25 @@ const rangeRect = computed<RangeRect | null>(() =>
  * destello del copiado, que son dos cajas sobre la misma caja.
  */
 function boxStyleFor(rect: RangeRect): Record<string, string> | null {
+  const edges = boxEdgesFor(rect)
+  if (!edges) return null
+  const { left, top, right, bottom } = edges
+  return {
+    transform: `translate3d(${left}px, ${top}px, 0)`,
+    width: `${Math.max(0, right - left)}px`,
+    height: `${Math.max(0, bottom - top)}px`,
+  }
+}
+
+/**
+ * Los cuatro bordes de un rectángulo de celdas, en coordenadas del canvas.
+ *
+ * Es la cuenta de {@link boxStyleFor} sin convertir a estilo: el tirador de
+ * relleno necesita solo la esquina inferior derecha.
+ */
+function boxEdgesFor(
+  rect: RangeRect,
+): { left: number; top: number; right: number; bottom: number } | null {
   const columns = resolvedColumns.value
   const first = columns[rect.columnStart]
   const last = columns[rect.columnEnd]
@@ -1483,11 +1508,7 @@ function boxStyleFor(rect: RangeRect): Record<string, string> | null {
   const top = geometry.offsetOf(rect.rowStart)
   const bottom = geometry.offsetOf(rect.rowEnd) + geometry.sizeOf(rect.rowEnd)
 
-  return {
-    transform: `translate3d(${left}px, ${top}px, 0)`,
-    width: `${Math.max(0, right - left)}px`,
-    height: `${Math.max(0, bottom - top)}px`,
-  }
+  return { left, top, right, bottom }
 }
 
 /**
@@ -2194,6 +2215,13 @@ function onViewportKeyDown(event: KeyboardEvent): void {
   // Mientras se edita, las teclas son del control: Enter y Escape ya las
   // consume el editor, que además detiene su propagación.
   if (editor.editing.value) return
+
+  // `Esc` con el tirador de relleno en la mano suelta el relleno sin escribir.
+  if (fill.value && event.key === 'Escape') {
+    event.preventDefault()
+    pool.cancelDrag()
+    return
+  }
 
   const rowCount = visibleRowCount.value
   if (rowCount === 0) return
@@ -3008,7 +3036,7 @@ function autoScrollStep(): void {
   const x = clamp(pointer.x, left, right - 1) - box.left
   const y = clamp(pointer.y, top, bottom - 1) - box.top
   const target = cellAtViewportPoint(x, y, scrollTop, scrollLeft, viewportWidth)
-  if (target) cellRange.extendTo(target)
+  if (target) dragOver(target)
 
   if (moved) autoScrollFrame = requestAnimationFrame(autoScrollStep)
 }
@@ -3121,6 +3149,352 @@ watch(
     if (editing) cellRange.collapse()
   },
 )
+
+/* ----------------------------------------------------- Tirador de relleno */
+
+/**
+ * Un arrastre del tirador de relleno, mientras dura.
+ *
+ * `source` es lo que estaba seleccionado al presionar el tirador —de ahí salen
+ * los valores— y `target`, hasta dónde llega el relleno, ya acotado a UN eje: el
+ * origen estirado hacia abajo, arriba, la derecha o la izquierda. Mientras el
+ * puntero no sale del origen, `target` ES el origen y soltar no escribe nada.
+ *
+ * Es un estado aparte del rango y no una punta más porque durante el arrastre
+ * la selección NO cambia: lo que crece es un contorno punteado de lo que se va a
+ * escribir. Recién al soltar la selección pasa a abarcar lo rellenado.
+ */
+const fill = shallowRef<{ source: RangeRect; target: RangeRect } | null>(null)
+
+/**
+ * Si la tabla ofrece el tirador.
+ *
+ * Una tabla sin ninguna columna editable no tiene dónde escribir, y un tirador
+ * que se deja arrastrar para no hacer nada es peor que no tenerlo.
+ */
+const fillEnabled = computed(
+  () =>
+    props.fillHandle !== 'none' &&
+    rangeEnabled.value &&
+    resolvedColumns.value.some((column) => column.column.editable === true),
+)
+
+/**
+ * El tirador: un cuadradito sobre la esquina inferior derecha de la selección.
+ *
+ * Con varios rangos sumados no hay UNA esquina de dónde tirar —qué se copiaría
+ * adónde no tiene respuesta—, y con un editor abierto la celda es del control.
+ * En los dos casos el tirador no está, igual que en una hoja de cálculo. Durante
+ * el arrastre se queda en la esquina del origen, que es de donde se lo tomó.
+ */
+const fillHandleStyle = computed<Record<string, string> | null>(() => {
+  if (!fillEnabled.value || editor.editing.value) return null
+  if (cellRange.extras.value.length > 0) return null
+  const rect = fill.value?.source ?? cellRange.rect.value
+  if (!rect) return null
+  const edges = boxEdgesFor(rect)
+  if (!edges) return null
+  return { transform: `translate3d(${edges.right}px, ${edges.bottom}px, 0)` }
+})
+
+/** El contorno punteado de lo que se va a rellenar, en cuanto el puntero sale del origen. */
+const fillBoxStyle = computed<Record<string, string> | null>(() => {
+  const current = fill.value
+  if (!current || sameRect(current.source, current.target)) return null
+  return boxStyleFor(current.target)
+})
+
+function sameRect(a: RangeRect, b: RangeRect): boolean {
+  return (
+    a.rowStart === b.rowStart &&
+    a.rowEnd === b.rowEnd &&
+    a.columnStart === b.columnStart &&
+    a.columnEnd === b.columnEnd
+  )
+}
+
+/**
+ * Presionar el tirador: fija el origen y arma el arrastre.
+ *
+ * El arrastre es el del pool, el mismo que extiende un rango: con un relleno en
+ * curso, las celdas que recorre el puntero van a {@link updateFill} en vez de
+ * mover la punta del rango —ver {@link dragOver}—. Así el relleno hereda el
+ * seguimiento del puntero fuera de la tabla y el auto-scroll sin duplicarlos.
+ */
+function onFillHandlePointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return
+  const source = cellRange.rect.value
+  const anchor = activeCell.value
+  if (!source || !anchor) return
+  event.preventDefault()
+  // El foco va al viewport por si estaba afuera: es ahí donde llega el `Esc`
+  // que cancela el relleno.
+  focusViewport(anchor)
+  // Un arrastre anterior que no llegó a cerrarse —un `pointerup` que se perdió—
+  // se descarta: el botón que se acaba de presionar es el que manda.
+  pool.cancelDrag()
+  fill.value = { source, target: source }
+  // Sin arrastre no llegaría ningún `onDragEnd` que lo cierre.
+  if (!pool.beginDrag()) fill.value = null
+}
+
+/** Una celda que recorrió el arrastre: estira el relleno si hay uno, y si no, el rango. */
+function dragOver(position: CellPosition): void {
+  if (fill.value) updateFill(position)
+  else cellRange.extendTo(position)
+}
+
+function updateFill(position: CellPosition): void {
+  const current = fill.value
+  if (!current) return
+  const target = fillTargetFor(current.source, position)
+  // Como con el rango: la mayoría de los movimientos caen en la misma celda que
+  // el anterior, y no merecen un repintado.
+  if (sameRect(target, current.target)) return
+  fill.value = { source: current.source, target }
+}
+
+/**
+ * Hasta dónde llega el relleno con el puntero sobre `position`.
+ *
+ * En modo `'area'` es el rectángulo que abarca el origen y la celda del puntero:
+ * en diagonal crece en los dos ejes a la vez. En modo `'axis'` va en UN eje, el
+ * que el puntero se alejó más del origen, contado en celdas; a igual distancia
+ * gana el vertical, que es el caso común. En los dos, adentro del origen no hay
+ * relleno: el resultado es el origen mismo.
+ */
+function fillTargetFor(source: RangeRect, position: CellPosition): RangeRect {
+  const column = resolvedColumns.value.findIndex((item) => item.key === position.columnKey)
+  if (column === -1) return source
+
+  if (props.fillHandle === 'area') {
+    return {
+      rowStart: Math.min(source.rowStart, position.rowIndex),
+      rowEnd: Math.max(source.rowEnd, position.rowIndex),
+      columnStart: Math.min(source.columnStart, column),
+      columnEnd: Math.max(source.columnEnd, column),
+    }
+  }
+
+  const below = position.rowIndex - source.rowEnd
+  const above = source.rowStart - position.rowIndex
+  const right = column - source.columnEnd
+  const left = source.columnStart - column
+  const vertical = Math.max(below, above)
+  const horizontal = Math.max(right, left)
+  if (vertical <= 0 && horizontal <= 0) return source
+
+  if (vertical >= horizontal) {
+    return below > 0
+      ? { ...source, rowEnd: position.rowIndex }
+      : { ...source, rowStart: position.rowIndex }
+  }
+  return right > 0 ? { ...source, columnEnd: column } : { ...source, columnStart: column }
+}
+
+/**
+ * Terminó el arrastre del pool. Si era un relleno, escribe, salvo que se haya
+ * cortado sin soltar el botón o que el puntero haya vuelto al origen.
+ */
+function finishFill(canceled: boolean): void {
+  const current = fill.value
+  if (!current) return
+  fill.value = null
+  if (canceled || sameRect(current.source, current.target)) return
+  applyFill(current.source, current.target)
+}
+
+/**
+ * Escribe el relleno: repite el origen sobre lo que el arrastre agregó.
+ *
+ * Una celda se copia en todas; un bloque se repite como patrón, alineado con el
+ * origen —rellenar hacia arriba pone justo encima la ÚLTIMA fila del bloque, que
+ * es la que continúa el patrón en esa dirección—. Las cabeceras de grupo se
+ * saltean sin consumir un paso del patrón, igual que al pegar, y la columna de
+ * casillas también.
+ *
+ * Es una sola cuenta para los dos modos: cada fila y cada columna del destino se
+ * resuelve, por separado, a la del origen de donde copia, y cada celda sale de
+ * cruzar las dos. En `'axis'` uno de los ejes no crece y se copia a sí mismo; en
+ * `'area'`, en diagonal, crecen los dos y el bloque se repite en ambos sentidos.
+ *
+ * Cada celda pasa por las reglas de toda edición —`editable`, el veto de
+ * `beforeEdit` y `validate`— y lo que sobrevive llega en UN `cellsCommit` con
+ * `source: 'fill'`, en orden de lectura. Al terminar, la selección abarca el
+ * origen y lo rellenado.
+ */
+function applyFill(source: RangeRect, target: RangeRect): void {
+  const rows = fillLanes(
+    dataRowsBetween(source.rowStart, source.rowEnd),
+    dataRowsBetween(target.rowStart, source.rowStart - 1),
+    dataRowsBetween(source.rowEnd + 1, target.rowEnd),
+  )
+  const columns = fillLanes(
+    fillColumnsBetween(source.columnStart, source.columnEnd),
+    fillColumnsBetween(target.columnStart, source.columnStart - 1),
+    fillColumnsBetween(source.columnEnd + 1, target.columnEnd),
+  )
+
+  const changes: EditCommitEvent<TRow>[] = []
+  for (const row of rows) {
+    for (const column of columns) {
+      // El origen no se escribe: ya tiene lo que tiene.
+      if (row.own && column.own) continue
+      const change = fillChange(
+        { rowIndex: row.from, columnKey: column.from },
+        { rowIndex: row.to, columnKey: column.to },
+      )
+      if (change) changes.push(change)
+    }
+  }
+
+  publishBatch('fill', changes)
+  selectFilled(source, target)
+}
+
+/** Una fila o una columna del destino, con la del origen de donde copia. */
+interface FillLane<T> {
+  to: T
+  from: T
+  /** Si es una línea del origen, que se copia a sí misma. */
+  own: boolean
+}
+
+/**
+ * Las líneas de un eje del destino, en orden: las agregadas antes del origen,
+ * las del origen y las agregadas después. Cada agregada apunta a la línea del
+ * patrón que le toca —ver {@link patternIndex}—.
+ */
+function fillLanes<T>(
+  pattern: readonly T[],
+  before: readonly T[],
+  after: readonly T[],
+): FillLane<T>[] {
+  const lanes: FillLane<T>[] = []
+  before.forEach((to, index) => {
+    const from = pattern[patternIndex(index, before.length, pattern.length, false)]
+    if (from !== undefined) lanes.push({ to, from, own: false })
+  })
+  for (const to of pattern) lanes.push({ to, from: to, own: true })
+  after.forEach((to, index) => {
+    const from = pattern[patternIndex(index, after.length, pattern.length, true)]
+    if (from !== undefined) lanes.push({ to, from, own: false })
+  })
+  return lanes
+}
+
+/**
+ * Qué elemento del patrón le toca a la posición `index` de lo agregado.
+ *
+ * Lo agregado se recorre siempre en orden de lectura, pero el patrón se cuenta
+ * desde el origen hacia afuera: hacia arriba o a la izquierda, el primer paso es
+ * el que queda pegado al origen, o sea el ÚLTIMO de la lista.
+ */
+function patternIndex(
+  index: number,
+  addedLength: number,
+  length: number,
+  forward: boolean,
+): number {
+  if (length === 0) return -1
+  const step = forward ? index : addedLength - 1 - index
+  const offset = step % length
+  return forward ? offset : length - 1 - offset
+}
+
+/** Las filas de datos entre dos posiciones visibles, incluidas: sin cabeceras de grupo. */
+function dataRowsBetween(start: number, end: number): number[] {
+  const rows: number[] = []
+  for (let rowIndex = start; rowIndex <= end; rowIndex += 1) {
+    if (grouping.entryAt(rowIndex)?.kind !== 'group') rows.push(rowIndex)
+  }
+  return rows
+}
+
+/** Las claves de las columnas visibles entre dos índices, incluidos, sin la de casillas. */
+function fillColumnsBetween(start: number, end: number): string[] {
+  const keys: string[] = []
+  const columns = resolvedColumns.value
+  for (let index = start; index <= end; index += 1) {
+    const column = columns[index]
+    if (column && column.key !== SELECTION_COLUMN_KEY) keys.push(column.key)
+  }
+  return keys
+}
+
+/**
+ * El cambio de UNA celda rellenada, o `null` si no cambia o no se puede.
+ *
+ * Dentro de la misma columna el valor viaja tal cual —una fecha sigue siendo esa
+ * fecha, una lista esa lista—. Al cruzar de columna viaja como TEXTO, igual que
+ * con `Ctrl`+`C` y `Ctrl`+`V`: la columna de destino puede guardar otra cosa, y
+ * su lectura —`column.parse` o su editor— es la que sabe convertirlo, por
+ * ejemplo de la etiqueta de una opción a su valor.
+ */
+function fillChange(from: CellPosition, to: CellPosition): EditCommitEvent<TRow> | null {
+  const fromRow = grouping.rowAt(from.rowIndex)
+  const fromColumn = getColumnDefinition(from.columnKey)
+  const row = grouping.rowAt(to.rowIndex)
+  const column = getColumnDefinition(to.columnKey)
+  // Una fila del modo servidor que no llegó no tiene nada que copiar, ni dónde.
+  if (fromRow === undefined || !fromColumn || row === undefined || !column) return null
+
+  const change = editor.prepareChange(to, 'fill', (type, current) => {
+    if (from.columnKey === to.columnKey) return ownCopy(readCellValue(fromColumn, fromRow))
+    const text = cellText(fromColumn, fromRow, grouping.toSourceIndex(from.rowIndex))
+    return parsePastedText(column, text, type, current, row, grouping.toSourceIndex(to.rowIndex))
+  })
+  return change ? withSourceRowIndex(change) : null
+}
+
+/**
+ * Una copia propia del valor, para que las celdas rellenadas no compartan el
+ * mismo `Date` ni la misma lista: mutar una en el lugar las cambiaría a todas.
+ */
+function ownCopy(value: CellValue): CellValue {
+  if (value instanceof Date) return new Date(value.getTime())
+  if (Array.isArray(value)) return [...value]
+  return value
+}
+
+/**
+ * Deja seleccionado el origen junto con lo rellenado.
+ *
+ * La celda activa se queda donde estaba si sigue siendo una esquina del
+ * resultado, que es el caso de siempre: se rellena alejándose de ella. Si no
+ * —se seleccionó de abajo hacia arriba y se rellenó hacia abajo—, pasa a la
+ * esquina del origen opuesta al relleno.
+ */
+function selectFilled(source: RangeRect, target: RangeRect): void {
+  const anchor = activeCell.value
+  const columns = resolvedColumns.value
+  if (!anchor) return
+  const anchorColumn = columns.findIndex((column) => column.key === anchor.columnKey)
+  if (anchorColumn === -1) return
+
+  const anchorRow =
+    anchor.rowIndex === target.rowStart || anchor.rowIndex === target.rowEnd
+      ? anchor.rowIndex
+      : target.rowStart === source.rowStart
+        ? target.rowStart
+        : target.rowEnd
+  const anchorIndex =
+    anchorColumn === target.columnStart || anchorColumn === target.columnEnd
+      ? anchorColumn
+      : target.columnStart === source.columnStart
+        ? target.columnStart
+        : target.columnEnd
+  const focusRow = anchorRow === target.rowStart ? target.rowEnd : target.rowStart
+  const focusIndex = anchorIndex === target.columnStart ? target.columnEnd : target.columnStart
+
+  const anchorKey = columns[anchorIndex]?.key
+  const focusKey = columns[focusIndex]?.key
+  if (anchorKey === undefined || focusKey === undefined) return
+  cellRange.set({
+    anchor: { rowIndex: anchorRow, columnKey: anchorKey },
+    focus: { rowIndex: focusRow, columnKey: focusKey },
+  })
+}
 
 /* -------------------------------------------------------- Editor por slot */
 
@@ -5019,6 +5393,7 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
     :data-crosshair="crosshair ? 'true' : 'false'"
     :data-active-cell="hasActiveCell"
     :data-range="rangeRect ? 'true' : 'false'"
+    :data-filling="fill ? 'true' : 'false'"
     :data-select-columns="columnSelection ? 'true' : 'false'"
     :data-select-rows="rowSelection ? 'true' : 'false'"
     :data-reorder="columnReorder ? 'true' : 'false'"
@@ -5331,7 +5706,13 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
         estar dentro del contenedor que scrollea no lo mueve de lugar.
       -->
       <div v-if="showEmptyMessage" class="dt-empty">{{ emptyText }}</div>
-      <div v-if="rangeBox" class="dt-range-box" :style="rangeBox" aria-hidden="true" />
+      <div
+        v-if="rangeBox"
+        class="dt-range-box"
+        :class="{ 'dt-range-box--handle': fillHandleStyle !== null }"
+        :style="rangeBox"
+        aria-hidden="true"
+      />
       <div
         v-for="(box, index) in extraRangeBoxes"
         :key="index"
@@ -5344,6 +5725,19 @@ function headerAlignClass(column: ResolvedColumn<TRow>): string | undefined {
         volviendo. Se monta sobre el área que se copió y se desmonta al terminar.
         El `key` es lo que hace que dos copiados seguidos se vean como dos.
       -->
+      <!--
+        Relleno: el contorno punteado de lo que se va a escribir y el tirador que
+        lo arrastra. El tirador es el único nodo de esta capa que recibe el
+        puntero; el contorno, como el recuadro, lo deja pasar a las celdas.
+      -->
+      <div v-if="fillBoxStyle" class="dt-fill-box" :style="fillBoxStyle" aria-hidden="true" />
+      <div
+        v-if="fillHandleStyle"
+        class="dt-fill-handle"
+        :style="fillHandleStyle"
+        aria-hidden="true"
+        @pointerdown="onFillHandlePointerDown"
+      />
       <div
         v-if="copyFlash"
         :key="copyFlash.id"

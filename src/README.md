@@ -165,6 +165,7 @@ vez.
 | ----------------- | ----------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `selectionMode`   | `'none' \| 'cell' \| 'row'`               | `'cell'`      | Qué selecciona el clic y el teclado. Ver [Modos de selección](#modos-de-selección).                                                           |
 | `rangeSelection`  | `boolean`                                 | `true`        | Rangos de celdas: arrastrar, `Shift`+clic, `Shift`+flechas, `Ctrl`+clic, `Ctrl`+`A`. Solo rige con `selectionMode: 'cell'`.                   |
+| `fillHandle`      | `'none' \| 'axis' \| 'area'`              | `'none'`      | Tirador de relleno en la esquina de la selección: apagado, en un eje o en área. Ver [Rellenar con el tirador](#rellenar-con-el-tirador).      |
 | `activeCell`      | `CellPosition \| null`                    | no controlado | `v-model:active-cell`. La celda activa; `null` es "controlado y sin selección".                                                               |
 | `columnSelection` | `boolean`                                 | `false`       | Clic en un encabezado selecciona la columna entera como rango. Ver [Seleccionar una columna o una fila](#seleccionar-una-columna-o-una-fila). |
 | `rowSelection`    | `boolean`                                 | `false`       | Clic en el número de una fila la selecciona entera como rango. No es `selectionMode: 'row'`.                                                  |
@@ -236,33 +237,33 @@ Se pasa parcial; lo que no declares queda en inglés.
 
 ## Eventos
 
-| Evento                    | Payload                             | Cuándo sale                                                                                                                                                              |
-| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `beforeEdit`              | `BeforeEditEvent<TRow>`             | Antes de escribir una celda, por cualquier vía. `source`: `'editor'`, `'clear'`, `'paste'`, `'undo'` o `'redo'`. **Cancelable** con `event.cancel()`, de forma síncrona. |
-| `afterEdit`               | `AfterEditEvent<TRow>`              | Al cerrarse un editor, haya confirmado o no (`canceled`). Una vez por editor abierto, antes de `editCommit`.                                                             |
-| `editCommit`              | `EditCommitEvent<TRow>`             | Un editor confirmó un valor distinto del anterior. Es el que te pide escribir en `rows`.                                                                                 |
-| `cellsCommit`             | `CellsCommitEvent<TRow>`            | Un gesto escribió varias celdas: vaciar, pegar, deshacer o rehacer. Uno por gesto, con todos los cambios.                                                                |
-| `editInvalid`             | `EditInvalidEvent<TRow>`            | `column.validate` rechazó un valor, o un texto pegado no se pudo leer. Es un aviso, no un veto.                                                                          |
-| `columnResize`            | `ColumnResizeEvent`                 | Terminó un cambio de ancho (arrastre, modo ancho o doble clic de ajuste) con un ancho distinto. Una vez por gesto, en px base. `Escape` en modo ancho no lo emite.       |
-| `sortChange`              | `SortChangeEvent`                   | El usuario cambió el orden desde un encabezado o el menú. No sale al restaurar lo persistido.                                                                            |
-| `rowClick`                | `{ row: TRow; rowIndex: number }`   | Clic en una fila de datos, en cualquier modo de selección. No sale en cabeceras de grupo.                                                                                |
-| `cellSelect`              | `CellSelectEvent<TRow>`             | La celda activa pasó a una fila de datos y una columna visible. Trae fila, columna y valor. No sale sobre una cabecera de grupo.                                         |
-| `rangeSelect`             | `RangeSelectEvent<TRow>`            | Cambió el rango, en cada paso del arrastre. `range: null` = una sola celda; `ranges` = todos los rangos, el vigente al final.                                            |
-| `rangeCopy`               | `RangeCopyEvent`                    | Después de escribir la selección en el portapapeles, con el texto exacto.                                                                                                |
-| `rowSelectionChange`      | `RowSelectionChangeEvent<TRow>`     | Cambió el conjunto de filas marcadas; `reason` dice el gesto. Después de `update:selectedRows`.                                                                          |
-| `groupToggle`             | `GroupToggleEvent`                  | Se plegó o se desplegó un grupo puntual, con clic o teclado. `expandAllGroups()` y `collapseAllGroups()` no lo emiten.                                                   |
-| `rowsRequest`             | `RowsRequestEvent`                  | Modo servidor: la tabla necesita el tramo `{ start, end, page }`. Una vez por página.                                                                                    |
-| `update:activeCell`       | `CellPosition \| null`              | Cambió la celda activa, también a `null`. Antes de `cellSelect`.                                                                                                         |
-| `update:columnVisibility` | `Readonly<Record<string, boolean>>` | Cambió la visibilidad: UI, persistencia o `resetLayout()`.                                                                                                               |
-| `update:columnOrder`      | `string[]`                          | Cambió el orden de las columnas.                                                                                                                                         |
-| `update:columnWidths`     | `Readonly<Record<string, number>>`  | Cambiaron los anchos; también durante el arrastre y con cada tecla del modo ancho.                                                                                       |
-| `update:columnPinning`    | `ColumnPinState`                    | Cambió el anclaje.                                                                                                                                                       |
-| `update:selectedRows`     | `RowSelectionState`                 | Cambiaron las filas marcadas.                                                                                                                                            |
-| `update:sort`             | `ColumnSort[]`                      | Cambió el orden; **también** al restaurar lo persistido.                                                                                                                 |
-| `update:groupBy`          | `string[]`                          | Cambió la agrupación.                                                                                                                                                    |
-| `update:expandedGroups`   | `string[]`                          | Cambió la expansión. Lleva la lista completa de expandidos. Antes de `groupToggle`.                                                                                      |
-| `update:zoom`             | `number`                            | La tabla corrigió un `zoom` fuera de rango; lleva el valor efectivo. Un valor válido no lo emite.                                                                        |
-| `update:fullscreen`       | `boolean`                           | Entró o salió de pantalla completa por cualquier motivo: la prop, los métodos, `Esc`/`F11` o un rechazo del navegador.                                                   |
+| Evento                    | Payload                             | Cuándo sale                                                                                                                                                                        |
+| ------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `beforeEdit`              | `BeforeEditEvent<TRow>`             | Antes de escribir una celda, por cualquier vía. `source`: `'editor'`, `'clear'`, `'paste'`, `'fill'`, `'undo'` o `'redo'`. **Cancelable** con `event.cancel()`, de forma síncrona. |
+| `afterEdit`               | `AfterEditEvent<TRow>`              | Al cerrarse un editor, haya confirmado o no (`canceled`). Una vez por editor abierto, antes de `editCommit`.                                                                       |
+| `editCommit`              | `EditCommitEvent<TRow>`             | Un editor confirmó un valor distinto del anterior. Es el que te pide escribir en `rows`.                                                                                           |
+| `cellsCommit`             | `CellsCommitEvent<TRow>`            | Un gesto escribió varias celdas: vaciar, pegar, rellenar, deshacer o rehacer. Uno por gesto, con todos los cambios.                                                                |
+| `editInvalid`             | `EditInvalidEvent<TRow>`            | `column.validate` rechazó un valor, o un texto pegado no se pudo leer. Es un aviso, no un veto.                                                                                    |
+| `columnResize`            | `ColumnResizeEvent`                 | Terminó un cambio de ancho (arrastre, modo ancho o doble clic de ajuste) con un ancho distinto. Una vez por gesto, en px base. `Escape` en modo ancho no lo emite.                 |
+| `sortChange`              | `SortChangeEvent`                   | El usuario cambió el orden desde un encabezado o el menú. No sale al restaurar lo persistido.                                                                                      |
+| `rowClick`                | `{ row: TRow; rowIndex: number }`   | Clic en una fila de datos, en cualquier modo de selección. No sale en cabeceras de grupo.                                                                                          |
+| `cellSelect`              | `CellSelectEvent<TRow>`             | La celda activa pasó a una fila de datos y una columna visible. Trae fila, columna y valor. No sale sobre una cabecera de grupo.                                                   |
+| `rangeSelect`             | `RangeSelectEvent<TRow>`            | Cambió el rango, en cada paso del arrastre. `range: null` = una sola celda; `ranges` = todos los rangos, el vigente al final.                                                      |
+| `rangeCopy`               | `RangeCopyEvent`                    | Después de escribir la selección en el portapapeles, con el texto exacto.                                                                                                          |
+| `rowSelectionChange`      | `RowSelectionChangeEvent<TRow>`     | Cambió el conjunto de filas marcadas; `reason` dice el gesto. Después de `update:selectedRows`.                                                                                    |
+| `groupToggle`             | `GroupToggleEvent`                  | Se plegó o se desplegó un grupo puntual, con clic o teclado. `expandAllGroups()` y `collapseAllGroups()` no lo emiten.                                                             |
+| `rowsRequest`             | `RowsRequestEvent`                  | Modo servidor: la tabla necesita el tramo `{ start, end, page }`. Una vez por página.                                                                                              |
+| `update:activeCell`       | `CellPosition \| null`              | Cambió la celda activa, también a `null`. Antes de `cellSelect`.                                                                                                                   |
+| `update:columnVisibility` | `Readonly<Record<string, boolean>>` | Cambió la visibilidad: UI, persistencia o `resetLayout()`.                                                                                                                         |
+| `update:columnOrder`      | `string[]`                          | Cambió el orden de las columnas.                                                                                                                                                   |
+| `update:columnWidths`     | `Readonly<Record<string, number>>`  | Cambiaron los anchos; también durante el arrastre y con cada tecla del modo ancho.                                                                                                 |
+| `update:columnPinning`    | `ColumnPinState`                    | Cambió el anclaje.                                                                                                                                                                 |
+| `update:selectedRows`     | `RowSelectionState`                 | Cambiaron las filas marcadas.                                                                                                                                                      |
+| `update:sort`             | `ColumnSort[]`                      | Cambió el orden; **también** al restaurar lo persistido.                                                                                                                           |
+| `update:groupBy`          | `string[]`                          | Cambió la agrupación.                                                                                                                                                              |
+| `update:expandedGroups`   | `string[]`                          | Cambió la expansión. Lleva la lista completa de expandidos. Antes de `groupToggle`.                                                                                                |
+| `update:zoom`             | `number`                            | La tabla corrigió un `zoom` fuera de rango; lleva el valor efectivo. Un valor válido no lo emite.                                                                                  |
+| `update:fullscreen`       | `boolean`                           | Entró o salió de pantalla completa por cualquier motivo: la prop, los métodos, `Esc`/`F11` o un rechazo del navegador.                                                             |
 
 Ni `update:activeCell` ni `cellSelect` salen si se vuelve a elegir la celda que ya estaba activa. Las
 formas de los payloads están en [Tipos de eventos y estado](#tipos-de-eventos-y-estado).
@@ -632,8 +633,8 @@ la tabla: despacha por `column.key`.
 
 ## Escribir en varias celdas
 
-Vaciar, pegar, deshacer y rehacer emiten **un** `cellsCommit` por gesto con la lista de cambios.
-`applyEdits` los aplica con una sola copia del array y una copia por fila tocada:
+Vaciar, pegar, rellenar, deshacer y rehacer emiten **un** `cellsCommit` por gesto con la lista de
+cambios. `applyEdits` los aplica con una sola copia del array y una copia por fila tocada:
 
 ```ts
 import { applyEdits } from 'vue-tablekit'
@@ -645,7 +646,7 @@ function onCellsCommit(event: CellsCommitEvent<Invoice>): void {
 ```
 
 - Cada cambio tiene la forma de un `editCommit` (`row`, `rowIndex` en `rows`, `column`, `columnKey`,
-  `oldValue`, `newValue`) y `event.source` dice el gesto: `'clear'`, `'paste'`, `'undo'` o `'redo'`.
+  `oldValue`, `newValue`) y `event.source` dice el gesto: `'clear'`, `'paste'`, `'fill'`, `'undo'` o `'redo'`.
 - Solo viajan las celdas que cambian de verdad. Cada una pasa por `editable`, por `beforeEdit` (que
   puede vetarla) y por `validate`. Un gesto que no cambia nada no emite nada.
 - `applyEdits` escribe `row[columnKey]`: una columna con `accessor` la tienes que aplicar a mano. Los
@@ -686,10 +687,43 @@ cálculo, y esta tabla) desde la esquina superior izquierda de la selección.
 
 Solo en modo `'cell'`. Con el editor abierto, el pegado es del input.
 
+### Rellenar con el tirador
+
+El cuadradito de la esquina inferior derecha de la selección es el tirador de relleno, como en
+Excel. Arrastrarlo copia lo seleccionado sobre las celdas que recorre el puntero. Viene
+**apagado**; `fillHandle` lo enciende en uno de dos modos:
+
+| Modo     | Hasta dónde llega                                                                      |
+| -------- | -------------------------------------------------------------------------------------- |
+| `'none'` | No hay tirador. Es el valor por defecto.                                               |
+| `'axis'` | Como Excel: **un** eje —abajo, arriba o a un costado—, el que más se alejó el puntero. |
+| `'area'` | El rectángulo entre la selección y el puntero: en diagonal crece en los dos ejes.      |
+
+```vue
+<DataTable :rows="rows" :columns="columns" fill-handle="axis" @cells-commit="onCellsCommit" />
+```
+
+- Mientras se arrastra, un contorno punteado muestra lo que se va a escribir; la selección no
+  cambia hasta soltar.
+- Una celda se copia en todas. Un bloque se repite como patrón alineado con el origen —en
+  `'area'`, en los dos sentidos—: rellenar hacia arriba pone justo encima la última fila del
+  bloque. No hay series (`1, 2` no sigue en `3, 4`): es una copia.
+- Dentro de la misma columna el valor viaja tal cual. Al cruzar de columna viaja como texto y se
+  lee como al pegar —`column.parse` o el editor de la columna de destino—, así que la etiqueta de
+  una opción llega al valor de la otra columna.
+- Cada celda pasa por `editable`, `beforeEdit` (con `source: 'fill'`) y `validate`. Las cabeceras
+  de grupo y la columna de casillas se saltan.
+- Llevar el puntero fuera de la tabla la desplaza, igual que al seleccionar un rango. `Esc` antes
+  de soltar cancela, y volver al origen también.
+- Al soltar, lo rellenado queda seleccionado y `Ctrl`+`Z` lo deshace entero.
+
+Aun encendido, el tirador no aparece sin `rangeSelection`, fuera de `selectionMode: 'cell'`, si
+ninguna columna visible es `editable`, con el editor abierto ni con varios rangos sumados.
+
 ### Deshacer y rehacer
 
-`Ctrl`+`Z` deshace el último gesto (una edición, un vaciado o un pegado, entero) y `Ctrl`+`Y` o
-`Ctrl`+`Shift`+`Z` lo rehace; `Cmd` vale lo mismo. Llega como `cellsCommit` con `source: 'undo'` o
+`Ctrl`+`Z` deshace el último gesto (una edición, un vaciado, un pegado o un relleno, entero) y
+`Ctrl`+`Y` o `Ctrl`+`Shift`+`Z` lo rehace; `Cmd` vale lo mismo. Llega como `cellsCommit` con `source: 'undo'` o
 `'redo'`.
 
 - La tabla recuerda lo que **anunció**, no lo que aplicaste: cada celda se revierte solo si todavía
@@ -1599,6 +1633,7 @@ enciéndelo, o entra con una celda ya seleccionada (`v-model:active-cell` o `sel
 | `.dt-row-number--range`                                                    | Número de una fila dentro de la selección.                             |
 | `.dt-row-number--hover`                                                    | Número de la fila bajo el puntero (modo `'row'`).                      |
 | `.dt-copy-flash`                                                           | El destello tras copiar; existe solo mientras dura.                    |
+| `.dt-fill-handle`, `.dt-fill-box`                                          | El tirador de relleno / el contorno de lo que se va a rellenar.        |
 | `.dt-cell--box`                                                            | Celda de un renderer de caja: es flex, así que `text-align` no aplica. |
 | `.dt-cell--pinned`, `.dt-cell--pinned-edge`                                | Celda anclada / la del borde del bloque anclado.                       |
 | `.dt-row--stripe`                                                          | Fila impar con `stripe`.                                               |
@@ -1623,6 +1658,7 @@ Atributos que la tabla escribe (sirven para CSS):
 | `data-reorder`        | `.dt-root`               | `true` / `false`                   | La prop `columnReorder`.                                           |
 | `data-active-cell`    | `.dt-root`               | `true` / `false`                   | Si hay una celda activa pintada en pantalla.                       |
 | `data-range`          | `.dt-root`               | `true` / `false`                   | Si hay un rango vivo.                                              |
+| `data-filling`        | `.dt-root`               | `true` / `false`                   | Si se está arrastrando el tirador de relleno.                      |
 | `data-column-key`     | `.dt-header-cell`        | la `key`                           | Identidad de la columna.                                           |
 | `data-row-key`        | `.dt-row`                | lo que da `rowKey`                 | Identidad de la fila; el `groupId` en una cabecera; `''` sin fila. |
 
@@ -1689,7 +1725,7 @@ Agrupar, alturas variables, zoom y persistencia no cuestan nada mientras no se u
 | -------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Filtrado y búsqueda                                | Filtra antes de pasar `rows`; en modo servidor, cambia la consulta y vacía `rows`.     |
 | Componente Vue por celda                           | Renderer nativo para lo que se ve siempre; slot `#editor` para editar.                 |
-| Autorrelleno con el cuadrito del rango             | El cuadrito solo marca el final del rango.                                             |
+| Series al rellenar (`1, 2` → `3, 4`, fechas)       | El tirador copia; no continúa series.                                                  |
 | Pivoteo                                            | Fuera de alcance.                                                                      |
 | Mover columnas con el teclado                      | Escribe `columnOrder` desde tu propia UI.                                              |
 | Alto de fila medido del contenido                  | Las alturas se declaran con `rowHeight`.                                               |
@@ -1723,7 +1759,7 @@ Agrupar, alturas variables, zoom y persistencia no cuestan nada mientras no se u
 | `createLocalStorageAdapter`                                                                                                                   | El adapter de persistencia por defecto    |
 
 Tipos: `DataTableProps`, `DataTableColumn`, `DataTableInstance`, `DataTableLabels`, `DataTableTheme`,
-`DataTableVariant`, `DataTableRadius`, `SelectionMode`, `SelectionColumnOptions`, `CellValue`,
+`DataTableVariant`, `DataTableRadius`, `SelectionMode`, `FillHandleMode`, `SelectionColumnOptions`, `CellValue`,
 `CellValueList`, `CellAlign`, `CellLayout`, `CellOption`, `CellEditorType`, `CellEditorSlotProps`,
 `CellPosition`, `CellRange`, `CellRenderer`, `CellRenderContext`, `CellRendererHandle`,
 `AnyCellRenderer`, `CellRendererFactory`, `RowHeightResolver`, `RowKey`, `RowSelectionState`,

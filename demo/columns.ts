@@ -154,6 +154,17 @@ export const projectColumns: readonly DataTableColumn<ProjectRow>[] = [
     renderer: 'select',
     editor: 'slot',
     options: STATUS_OPTIONS,
+    // Con un editor de slot la tabla no sabe leer un texto pegado o rellenado
+    // desde otra columna, y lo guardaría tal cual: cualquier frase terminaría
+    // siendo un "estado". Se acepta el valor o la etiqueta de una opción y lo
+    // demás se rechaza, que la tabla anuncia con `editInvalid`.
+    parse: (text) => {
+      const wanted = text.trim().toLowerCase()
+      return STATUS_OPTIONS.find(
+        (option) =>
+          String(option.value).toLowerCase() === wanted || option.label.toLowerCase() === wanted,
+      )?.value
+    },
     // Sin `aggregate` a propósito. Esta es la columna por la que se agrupa en la
     // demo, y un `count` sobre ella repite el número que la cabecera ya muestra
     // en su contador. Un agregado tiene que aportar algo que no esté a la vista;

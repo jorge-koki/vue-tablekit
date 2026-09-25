@@ -46,6 +46,14 @@
       </p>
 
       <p>
+        <strong>Rellenar.</strong> Con el relleno encendido en los controles, arrastrar el
+        cuadradito de la esquina inferior derecha de la selección copia lo seleccionado sobre las
+        celdas que se recorren; un bloque se repite como patrón. «Un eje» va hacia abajo, arriba o a
+        los costados; «Área» cubre el rectángulo hasta el puntero, también en diagonal.
+        <kbd>Esc</kbd> antes de soltar lo cancela.
+      </p>
+
+      <p>
         <strong>Seleccionar un bloque.</strong> Arrastrar desde una celda —llevar el puntero fuera
         de la tabla la desplaza—, o <kbd>Shift</kbd>+clic, o <kbd>Shift</kbd> con las flechas;
         <kbd>Ctrl</kbd>+clic suma otro bloque; <kbd>Ctrl</kbd>+<kbd>A</kbd> selecciona todo. Con

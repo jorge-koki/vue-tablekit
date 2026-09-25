@@ -230,8 +230,15 @@ export interface RowPoolCallbacks {
    * está la mano.
    */
   onDragMove?: (clientX: number, clientY: number, overCell: boolean) => void
-  /** Terminó el arrastre de selección: se soltó el botón, se canceló o se desmontó. */
-  onDragEnd?: () => void
+  /**
+   * Terminó el arrastre de selección.
+   *
+   * `canceled` es `false` cuando el usuario soltó el botón —también fuera de la
+   * ventana— y `true` cuando el arrastre se cortó sin que lo soltara: un
+   * `pointercancel`, {@link RowPool.cancelDrag} o el desmontaje. Para un rango
+   * da igual, pero el relleno solo escribe si se soltó.
+   */
+  onDragEnd?: (canceled: boolean) => void
   /**
    * El usuario presionó sobre el número de una fila, en la regleta.
    *
@@ -447,6 +454,19 @@ export interface RowPool<TRow> {
   invalidate(): void
   /** Nodo DOM de una celda pintada, o `null` si esa celda no está en la ventana. */
   getCellElement(rowIndex: number, columnKey: string): HTMLElement | null
+  /**
+   * Arma un arrastre que no empezó sobre una celda: el del tirador de relleno,
+   * que vive fuera del canvas.
+   *
+   * A partir de ahí es el mismo arrastre de siempre —`onCellDragOver`,
+   * `onDragMove` y `onDragEnd`—, así que el relleno hereda el seguimiento del
+   * puntero fuera de la tabla y el auto-scroll sin duplicar nada.
+   *
+   * Devuelve si lo armó: no lo hace con uno ya en curso ni sin montar.
+   */
+  beginDrag(): boolean
+  /** Corta el arrastre en curso sin que se haya soltado el botón. Ver `onDragEnd`. */
+  cancelDrag(): void
 }
 
 /** El vacío de `extraRanges`, compartido para no crear un array por frame. */
@@ -549,7 +569,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     if (container) {
       // Antes de soltar el contenedor: `endDrag` necesita su documento para dar
       // de baja los listeners, y con `container` ya en `null` no tendría dónde.
-      endDrag()
+      cancelDrag()
       container.removeEventListener('dblclick', handleDoubleClick)
       container.removeEventListener('click', handleClick)
       container.removeEventListener('pointerdown', handlePointerDown)
@@ -1785,8 +1805,8 @@ export function useRowPool<TRow extends Record<string, unknown>>(
    */
   let dragging = false
 
-  function beginDrag(): void {
-    if (dragging || !container || !callbacks.onCellDragOver) return
+  function beginDrag(): boolean {
+    if (dragging || !container || !callbacks.onCellDragOver) return false
     dragging = true
 
     // Sobre el documento y no sobre el contenedor: el puntero se sale de la
@@ -1796,27 +1816,39 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     // siempre el canvas en vez de la celda que está debajo del puntero.
     const doc = container.ownerDocument
     doc.addEventListener('pointermove', handleDragMove)
-    doc.addEventListener('pointerup', endDrag)
-    doc.addEventListener('pointercancel', endDrag)
+    doc.addEventListener('pointerup', releaseDrag)
+    doc.addEventListener('pointercancel', cancelDrag)
+    return true
   }
 
-  function endDrag(): void {
+  /** Se soltó el botón. */
+  function releaseDrag(): void {
+    endDrag(false)
+  }
+
+  /** El arrastre se cortó sin que se soltara el botón. */
+  function cancelDrag(): void {
+    endDrag(true)
+  }
+
+  function endDrag(canceled: boolean): void {
     if (!dragging || !container) return
     dragging = false
 
     const doc = container.ownerDocument
     doc.removeEventListener('pointermove', handleDragMove)
-    doc.removeEventListener('pointerup', endDrag)
-    doc.removeEventListener('pointercancel', endDrag)
-    callbacks.onDragEnd?.()
+    doc.removeEventListener('pointerup', releaseDrag)
+    doc.removeEventListener('pointercancel', cancelDrag)
+    callbacks.onDragEnd?.(canceled)
   }
 
   function handleDragMove(event: Event): void {
     // Soltar el botón fuera de la ventana no produce `pointerup`, así que el
     // arrastre quedaría armado y la selección seguiría al puntero sin que nadie
-    // esté presionando nada. `buttons` en cero dice exactamente eso.
+    // esté presionando nada. `buttons` en cero dice exactamente eso, y cuenta
+    // como soltar: el botón se soltó, solo que donde la página no lo vio.
     if (event instanceof MouseEvent && event.buttons === 0) {
-      endDrag()
+      releaseDrag()
       return
     }
 
@@ -1831,5 +1863,5 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     })
   }
 
-  return { mount, unmount, paint, trim, invalidate, getCellElement }
+  return { mount, unmount, paint, trim, invalidate, getCellElement, beginDrag, cancelDrag }
 }

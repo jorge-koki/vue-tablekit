@@ -66,6 +66,26 @@ function escapeField(value: string): string {
 }
 
 /**
+ * El texto que muestra una celda, sin proteger: lo que el copiado pone entre
+ * tabuladores.
+ *
+ * Lo usa también el relleno que cruza de columna, que copia cada celda como lo
+ * harían `Ctrl`+`C` y `Ctrl`+`V`.
+ *
+ * @param rowIndex - Índice de `row` dentro de la prop `rows`, para el contexto del renderer.
+ */
+export function cellText<TRow extends Record<string, unknown>>(
+  column: DataTableColumn<TRow>,
+  row: TRow,
+  rowIndex: number,
+): string {
+  const raw = readRawValue(column, row)
+  const renderer = resolveRenderer<TRow>(column.renderer)
+  const ctx = { value: toCellValue(raw), raw, row, rowIndex, column, isEditing: false }
+  return renderer.text ? renderer.text(ctx) : formatCellValue(ctx.value)
+}
+
+/**
  * Arma el texto de un rango rectangular de celdas.
  *
  * Las cabeceras de grupo que caigan adentro del rango NO aportan una línea. La
@@ -97,20 +117,8 @@ export function buildRangeText<TRow extends Record<string, unknown>>(
       const column = columns[index]
       if (!column) continue
 
-      const raw = readRawValue(column, row)
-      const renderer = resolveRenderer<TRow>(column.renderer)
-      const ctx = {
-        value: toCellValue(raw),
-        raw,
-        row,
-        rowIndex: sourceIndex,
-        column,
-        isEditing: false,
-      }
-      const text = renderer.text ? renderer.text(ctx) : formatCellValue(ctx.value)
-
       if (index > 0) line += '\t'
-      line += escapeField(text)
+      line += escapeField(cellText(column, row, sourceIndex))
     }
 
     lines.push(line)

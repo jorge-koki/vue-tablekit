@@ -1434,6 +1434,23 @@ export interface DataTableProps<TRow> {
    */
   rangeSelection?: boolean
   /**
+   * Tirador de relleno, como en una hoja de cálculo. Por defecto `'none'`.
+   *
+   * Es el cuadradito de la esquina inferior derecha de la selección. Arrastrarlo
+   * copia lo seleccionado sobre las celdas que se recorren: una celda se repite,
+   * y un bloque se repite como patrón. Cuánto abarca lo decide el modo —ver
+   * {@link FillHandleMode}—. Los cambios llegan en UN `cellsCommit` con
+   * `source: 'fill'` y pasan por las mismas reglas que pegar: `editable`, el veto
+   * de `beforeEdit` y `validate`. `Esc` durante el arrastre lo cancela, y
+   * `Ctrl`+`Z` lo deshace.
+   *
+   * Apagado por defecto: es un gesto que ESCRIBE, y una tabla que no lo espera no
+   * debería ofrecerlo. Necesita `rangeSelection` y `selectionMode: 'cell'`, y no
+   * aparece si ninguna columna visible es `editable`, ni con varios rangos sumados
+   * con `Ctrl`+clic.
+   */
+  fillHandle?: FillHandleMode
+  /**
    * Cuántos gestos recuerda el historial de `Ctrl`+`Z`. Por defecto `100`; `0`
    * lo apaga.
    *
@@ -1521,6 +1538,17 @@ export interface DataTableProps<TRow> {
  * - `none`: sin selección. Ni siquiera se registran los manejadores de teclado.
  */
 export type SelectionMode = 'none' | 'cell' | 'row'
+
+/**
+ * Hasta dónde llega el tirador de relleno. Ver {@link DataTableProps.fillHandle}.
+ *
+ * - `'none'`: no hay tirador.
+ * - `'axis'`: como Excel, en UN eje —abajo, arriba, a la derecha o a la
+ *   izquierda—, el que el puntero se alejó más de la selección.
+ * - `'area'`: el rectángulo entre la selección y el puntero, en los dos ejes a la
+ *   vez. Arrastrar en diagonal rellena filas y columnas de una sola vez.
+ */
+export type FillHandleMode = 'none' | 'axis' | 'area'
 
 /** Identidad de una fila, tal como la devuelve {@link DataTableProps.rowKey}. */
 export type RowKey = string | number
@@ -1738,9 +1766,11 @@ export interface CellRange {
  *   escribir— o la casilla que se alterna en el lugar.
  * - `'clear'`: `Supr` o `Retroceso` sobre la selección.
  * - `'paste'`: `Ctrl`+`V`.
+ * - `'fill'`: arrastrar el tirador de relleno, el cuadradito de la esquina de la
+ *   selección. Ver {@link DataTableProps.fillHandle}.
  * - `'undo'` / `'redo'`: `Ctrl`+`Z` y `Ctrl`+`Y`, o los métodos `undo()` y `redo()`.
  */
-export type EditSource = 'editor' | 'clear' | 'paste' | 'undo' | 'redo'
+export type EditSource = 'editor' | 'clear' | 'paste' | 'fill' | 'undo' | 'redo'
 
 /** Las vías que escriben varias celdas de una vez, y por eso llegan como lote. */
 export type BatchEditSource = Exclude<EditSource, 'editor'>
@@ -1838,7 +1868,7 @@ export interface EditCommitEvent<TRow> {
 
 /**
  * Se emite UNA vez por cada gesto que escribe varias celdas: vaciar, pegar,
- * deshacer y rehacer.
+ * rellenar, deshacer y rehacer.
  *
  * Es el equivalente en lote de {@link EditCommitEvent}, y cada cambio tiene su
  * misma forma. Existe porque la tabla nunca escribe en `rows`: un `editCommit`

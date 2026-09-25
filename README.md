@@ -44,7 +44,8 @@ const columnas: DataTableColumn<Empleado>[] = [
 ## Qué sabe hacer
 
 - Navegación por teclado completa y **selección de bloques** —uno o varios, con `Ctrl`+clic— que se
-  copian con `Ctrl`+`C` y se pegan en Excel, y **pegado desde Excel** con `Ctrl`+`V`.
+  copian con `Ctrl`+`C` y se pegan en Excel, **pegado desde Excel** con `Ctrl`+`V` y **tirador de
+  relleno** opcional en la esquina de la selección, en un eje como Excel o en área.
 - **Edición en línea** cancelable, con **validación**, **deshacer y rehacer**, `Supr` para vaciar y un
   editor de listas. La tabla nunca escribe en tus datos: te dice qué cambió, y `applyEdits` lo aplica
   en una línea.

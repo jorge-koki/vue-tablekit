@@ -7,6 +7,7 @@ import type {
   DataTableRadius,
   DataTableTheme,
   DataTableVariant,
+  FillHandleMode,
   SelectionMode,
 } from 'vue-tablekit'
 import { ROW_COUNTS } from './data'
@@ -149,6 +150,21 @@ const SELECTION_MODE_NOTES: Record<SelectionMode, string> = {
 
 /** Los gestos que seleccionan un bloque producen un rango, y el rango solo existe en modo celda. */
 const cellMode = computed(() => selectionMode.value === 'cell')
+
+/**
+ * El tirador de relleno: apagado, en un eje o en área, apagado de entrada igual
+ * que en el componente. Sale de la esquina de la selección, así que también es
+ * solo de modo celda.
+ */
+const fillHandle = defineModel<FillHandleMode>('fillHandle', { required: true })
+
+/** Qué hace cada modo de relleno, en una línea, bajo el selector. */
+const FILL_HANDLE_NOTES: Record<FillHandleMode, string> = {
+  none: 'Sin cuadradito en la esquina de la selección.',
+  axis: 'Como Excel: rellena en un eje, hacia donde más te alejes.',
+  area: 'Rellena el rectángulo hasta el puntero, también en diagonal.',
+}
+
 const columnSelection = defineModel<boolean>('columnSelection', { required: true })
 const rowSelection = defineModel<boolean>('rowSelection', { required: true })
 const focusRing = defineModel<boolean>('focusRing', { required: true })
@@ -231,6 +247,17 @@ const columnVisibility = defineModel<ColumnVisibilityState>('columnVisibility', 
         </label>
 
         <p class="demo-field-note">{{ SELECTION_MODE_NOTES[selectionMode] }}</p>
+
+        <label class="demo-field" :class="{ 'demo-field--off': !cellMode }">
+          <span>Relleno</span>
+          <select v-model="fillHandle" :disabled="!cellMode">
+            <option value="none">Apagado</option>
+            <option value="axis">Un eje</option>
+            <option value="area">Área</option>
+          </select>
+        </label>
+
+        <p class="demo-field-note">{{ FILL_HANDLE_NOTES[fillHandle] }}</p>
 
         <label class="demo-field demo-field--inline">
           <input v-model="selectionColumn" type="checkbox" />
