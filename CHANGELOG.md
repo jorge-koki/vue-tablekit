@@ -7,7 +7,9 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
-## [Sin publicar]
+## [0.5.0] — 2026-09-24
+
+Sube la **minor** porque suma una funcionalidad y amplía un tipo público —ver **Cambiado**—.
 
 ### Agregado
 
