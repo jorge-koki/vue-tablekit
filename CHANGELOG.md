@@ -7,7 +7,10 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
-## [Sin publicar]
+## [0.6.0] — 2026-09-30
+
+Sube la **minor** porque cambia tipos públicos —`EditSource` suma `'fillDown'` y
+`DataTableColumn.options` puede ser una función—, ver **Cambiado**.
 
 Todo lo agregado es opcional: una tabla que no usa las props nuevas se comporta igual. Lo que cambia
 sin pedirlo está en **Cambiado** y **Corregido**.
