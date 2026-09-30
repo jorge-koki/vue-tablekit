@@ -518,6 +518,14 @@ export interface TableListeners {
   onRangeCopy?: (event: RangeCopyEvent) => void
   onCellsCommit?: (event: CellsCommitEvent<GridRow>) => void
   onEditInvalid?: (event: EditInvalidEvent<GridRow>) => void
+  /**
+   * La mitad de `v-model:zoom` que escucha. Un test que quiera el contrato
+   * completo le devuelve el valor a la tabla desde acá, DENTRO del mismo emit,
+   * que es lo que hace el `v-model` compilado de un padre real: cambia el estado
+   * del padre en el acto, y la prop le llega a la tabla en el flush siguiente
+   * del planificador, no en el emit mismo.
+   */
+  'onUpdate:zoom'?: (zoom: number) => void
 }
 
 /**

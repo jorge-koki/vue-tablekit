@@ -3,6 +3,7 @@ import type { Ref, ShallowRef } from 'vue'
 import type {
   AfterEditEvent,
   BeforeEditEvent,
+  CellEditorMove,
   CellEditorType,
   CellOption,
   CellPosition,
@@ -19,6 +20,7 @@ import {
   fromDateInputString,
   parseTagsText,
   readCellValue,
+  resolveColumnOptions,
   tagsToText,
   toDateInputString,
   toEditString,
@@ -83,6 +85,19 @@ export interface UseCellEditorOptions<TRow> {
   ) => string | null
   /** Emite `editInvalid`: un valor que `validate` rechazó. */
   emitInvalid?: (event: EditInvalidEvent<TRow>) => void
+  /**
+   * Las opciones de la columna para la fila de una celda.
+   *
+   * Existe por lo mismo que `validate`: una columna con opciones por fila las
+   * pide con el índice del DATASET, y este módulo trabaja en posiciones
+   * visibles. Sin esto se resuelven con el índice de la posición, que es el
+   * mismo mientras no haya grupos.
+   */
+  resolveOptions?: (
+    position: CellPosition,
+    row: TRow,
+    column: DataTableColumn<TRow>,
+  ) => readonly CellOption[] | undefined
   /** Mensaje de un texto que no se pudo convertir al pegarlo. */
   invalidMessage?: () => string
   /**
@@ -94,6 +109,22 @@ export interface UseCellEditorOptions<TRow> {
    * encadenar las dos acciones.
    */
   onEnterCommit?: () => void
+  /**
+   * Se invoca después de confirmar con una tecla que además mueve —`Enter`,
+   * `Shift`+`Enter`, `Tab`, `Shift`+`Tab`— o con un `commit` de slot que pidió
+   * moverse. Nunca después de un rechazo: el editor sigue abierto y la
+   * selección, en su celda.
+   *
+   * Es la forma general de {@link UseCellEditorOptions.onEnterCommit}, que se
+   * conserva para quien solo quiere enterarse del `Enter`.
+   */
+  onCommitMove?: (move: CellEditorMove) => void
+  /**
+   * Si `Tab` es de la tabla mientras el editor está abierto. Sin
+   * `onCommitMove` nunca lo es: `Tab` sigue siendo del navegador y el `blur`
+   * confirma, como siempre.
+   */
+  tabNavigates?: () => boolean
   /**
    * Se invoca al cerrar el editor, solo si el control TENÍA el foco del DOM.
    *
@@ -144,8 +175,11 @@ export interface UseCellEditorReturn<TRow = unknown> {
    * ante un cambio real, después `afterEdit`—, así que no existe un segundo
    * camino de edición. No vuelve a emitir `beforeEdit`: ese veto ya corrió al
    * abrir.
+   *
+   * Con `move`, un valor aceptado termina en `onCommitMove`, igual que las
+   * teclas del editor incluido.
    */
-  commitSlotValue: (newValue: CellValue) => void
+  commitSlotValue: (newValue: CellValue, move?: CellEditorMove) => void
   /**
    * Cierra el editor de slot si la celda apuntada no es la que está abierta.
    *
@@ -176,11 +210,16 @@ export interface UseCellEditorReturn<TRow = unknown> {
    * No emite `editCommit` ni `afterEdit`: el lote se anuncia entero, una vez,
    * desde el componente. `rowIndex` sale en coordenadas VISIBLES, como todo lo de
    * este módulo; traducirlo al dataset es del que emite.
+   *
+   * `rulesRow` es la fila que ve `validate`: en un gesto de varias celdas, la
+   * fila con lo que el gesto ya le escribió. El cambio y los eventos siguen
+   * llevando la fila real.
    */
   prepareChange: (
     position: CellPosition,
     source: EditSource,
     nextValue: (type: CellEditorType, current: CellValue) => ParsedCellValue,
+    rulesRow?: TRow,
   ) => EditCommitEvent<TRow> | null
   /** Cierra el editor y libera listeners. */
   dispose: () => void
@@ -219,6 +258,9 @@ export function inferEditorType<TRow>(
   if (typeof value === 'boolean') return 'checkbox'
   if (typeof value === 'number') return 'number'
   if (value instanceof Date) return 'date'
+  // Opciones por fila: declararlas como función ya es decir "lista cerrada",
+  // aunque sin una fila no se pueda saber cuántas son.
+  if (typeof column.options === 'function') return 'select'
   if (column.options && column.options.length > 0) return 'select'
   return 'text'
 }
@@ -294,6 +336,12 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
   let originalValue: CellValue = undefined
   /** Opciones con las que se llenó el `<select>`, para no rehacerlo sin motivo. */
   let selectOptions: readonly CellOption[] | null = null
+  /**
+   * Las opciones de la celda abierta, resueltas UNA vez al abrir: con opciones
+   * por fila, la lista depende de la fila y no tiene por qué pedirse de nuevo en
+   * cada tecla.
+   */
+  let activeOptions: readonly CellOption[] | undefined = undefined
 
   /**
    * Evita la reentrada mientras se cierra.
@@ -402,14 +450,24 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     }
   }
 
+  /** Las opciones de una celda, para su fila. */
+  function optionsFor(
+    position: CellPosition,
+    row: TRow,
+    column: DataTableColumn<TRow>,
+  ): readonly CellOption[] | undefined {
+    if (options.resolveOptions) return options.resolveOptions(position, row, column)
+    return resolveColumnOptions(column, row, position.rowIndex)
+  }
+
   /** Texto con el que se abre el control, según su tipo. */
   function toControlValue(
     type: CellEditorType,
     value: CellValue,
-    column?: DataTableColumn<TRow>,
+    choices: readonly CellOption[] | undefined,
   ): string {
     if (type === 'date') return toDateInputString(value)
-    if (type === 'tags') return tagsToText(value, column?.options)
+    if (type === 'tags') return tagsToText(value, choices)
     if (type === 'number') {
       if (typeof value === 'number' && Number.isFinite(value)) return String(value)
       return toEditString(value)
@@ -422,15 +480,15 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     type: CellEditorType,
     raw: string,
     previous: CellValue,
-    column: DataTableColumn<TRow>,
+    choices: readonly CellOption[] | undefined,
   ): CellValue {
     if (type === 'date') return fromDateInputString(raw, previous)
-    if (type === 'tags') return parseTagsText(raw, previous, column.options)
+    if (type === 'tags') return parseTagsText(raw, previous, choices)
 
     if (type === 'select') {
       // Se recupera el valor tipado de la opción: el `<select>` solo devuelve
       // strings, y un padre que guardaba `1` no debe recibir `"1"`.
-      const match = column.options?.find((option) => String(option.value) === raw)
+      const match = choices?.find((option) => String(option.value) === raw)
       if (match) return match.value
       return coerceEditValue(raw, previous)
     }
@@ -498,6 +556,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     if (!runBeforeEdit(position, context.row, context.column, context.value)) return false
 
     originalValue = context.value
+    activeOptions = optionsFor(position, context.row, context.column)
     editing.value = { rowIndex: position.rowIndex, columnKey: position.columnKey }
     appliedGeometry = null
     activeControl = control
@@ -515,15 +574,15 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     }
 
     if (control instanceof HTMLSelectElement) {
-      populateSelect(control, context.column.options ?? [])
+      populateSelect(control, activeOptions ?? [])
     } else if (type === 'number') {
       applyNumericBounds(control, context.column)
     }
 
     const seeded = initialText !== undefined && type !== 'select' && type !== 'date'
-    control.value = seeded ? initialText : toControlValue(type, context.value, context.column)
+    control.value = seeded ? initialText : toControlValue(type, context.value, activeOptions)
     if (type === 'tags' && control instanceof HTMLInputElement)
-      openTagsPicker(control, context.column)
+      openTagsPicker(control, activeOptions ?? [])
 
     applyGeometry(position)
     control.hidden = false
@@ -639,6 +698,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     position: CellPosition,
     source: EditSource,
     nextValue: (type: CellEditorType, current: CellValue) => ParsedCellValue,
+    rulesRow?: TRow,
   ): EditCommitEvent<TRow> | null {
     const context = resolveContext(position)
     if (!context || context.column.editable !== true) return null
@@ -663,11 +723,16 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     // preguntarle a `beforeEdit` por algo que no va a pasar solo haría ruido.
     if (cellValuesEqual(context.value, newValue)) return null
     if (!runBeforeEdit(position, context.row, context.column, context.value, source)) return null
-    if (
-      rejectionOf(position, context.row, context.column, context.value, newValue, source) !== null
-    ) {
-      return null
-    }
+    const message = rejectionOf(
+      position,
+      context.row,
+      context.column,
+      context.value,
+      newValue,
+      source,
+      rulesRow,
+    )
+    if (message !== null) return null
 
     return {
       row: context.row,
@@ -698,7 +763,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
       return true
     }
 
-    const newValue = control ? fromControlValue(type, rawText, oldValue, context.column) : oldValue
+    const newValue = control ? fromControlValue(type, rawText, oldValue, activeOptions) : oldValue
     const message = rejectionOf(position, context.row, context.column, oldValue, newValue, 'editor')
     if (message !== null) {
       // Con `Enter` el usuario sigue ahí para corregirlo. Saliendo de la celda ya
@@ -723,6 +788,9 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
    * Un valor igual al anterior no se valida: no es un cambio, y un dato que ya
    * estaba mal cargado no tiene por qué dejar al usuario atrapado en la celda.
    * Cada rechazo se anuncia con `editInvalid`.
+   *
+   * `rulesRow` es la fila que ve la regla —ver `prepareChange`—; el aviso lleva
+   * la fila real.
    */
   function rejectionOf(
     position: CellPosition,
@@ -731,9 +799,10 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     oldValue: CellValue,
     newValue: CellValue,
     source: EditSource,
+    rulesRow: TRow = row,
   ): string | null {
     if (cellValuesEqual(oldValue, newValue)) return null
-    const message = options.validate?.(position, row, column, newValue) ?? null
+    const message = options.validate?.(position, rulesRow, column, newValue) ?? null
     if (message === null) return null
     options.emitInvalid?.({
       source,
@@ -846,8 +915,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
   }
 
   /** Abre el panel bajo el input, con las casillas de lo que ya tiene la celda. */
-  function openTagsPicker(control: HTMLInputElement, column: DataTableColumn<TRow>): void {
-    const choices = column.options ?? []
+  function openTagsPicker(control: HTMLInputElement, choices: readonly CellOption[]): void {
     if (choices.length === 0) {
       hideTagsPicker()
       return
@@ -1017,7 +1085,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     }
   }
 
-  function commitSlotValue(newValue: CellValue): void {
+  function commitSlotValue(newValue: CellValue, move?: CellEditorMove): void {
     const position = editing.value
     // La guarda por tipo no es defensiva de más: el slot vive en el árbol de Vue
     // y su `commit` es una closure que el consumidor puede invocar tarde, después
@@ -1052,6 +1120,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     if (!context) return
 
     publishResult(position, context.row, context.column, oldValue, newValue)
+    if (move) options.onCommitMove?.(move)
   }
 
   function commitIfElsewhere(position: CellPosition): void {
@@ -1165,6 +1234,7 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
     activeSlot = null
     activeType = null
     originalValue = undefined
+    activeOptions = undefined
     appliedGeometry = null
     closing = false
     if (hadFocus) options.onReleaseFocus?.()
@@ -1235,7 +1305,20 @@ export function useCellEditor<TRow extends Record<string, unknown>>(
       event.preventDefault()
       event.stopPropagation()
       // Un valor rechazado deja el editor abierto: no se baja de fila.
-      if (commit(true)) options.onEnterCommit?.()
+      if (commit(true)) {
+        options.onEnterCommit?.()
+        options.onCommitMove?.(event.shiftKey ? 'up' : 'down')
+      }
+      return
+    }
+    // `Tab` confirma y pasa a la celda de al lado, como en una hoja de cálculo.
+    // Sin esto la tecla era del navegador: el foco saltaba a lo que siguiera en
+    // la página, el `blur` confirmaba y la grilla quedaba sin foco. Con un valor
+    // rechazado se comporta como `Enter`: el editor queda abierto con el error.
+    if (event.key === 'Tab' && options.onCommitMove && (options.tabNavigates?.() ?? true)) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (commit(true)) options.onCommitMove(event.shiftKey ? 'left' : 'right')
       return
     }
     if (event.key === 'Escape') {

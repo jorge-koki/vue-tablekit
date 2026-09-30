@@ -340,6 +340,12 @@ export interface DataTableColumn<TRow> {
    * `false` usa el mensaje de `labels.invalidValue`. `rowIndex` indexa `rows`,
    * igual que en los eventos. No corre sobre un valor igual al anterior: no es
    * un cambio.
+   *
+   * En un gesto de varias celdas —pegar, vaciar, rellenar— `row` es la fila
+   * como VA A QUEDAR con lo que el mismo gesto ya le escribió a la izquierda:
+   * pegar "área ⇥ puesto" valida el puesto contra el área nueva. Es una copia
+   * que escribe `row[column.key]`, como {@link applyEdits}; el `row` de cada
+   * cambio anunciado sigue siendo el objeto de `rows`.
    */
   validate?: (value: CellValue, row: TRow, rowIndex: number) => string | boolean | null | undefined
   /**
@@ -349,6 +355,9 @@ export interface DataTableColumn<TRow> {
    * y sin esto la tabla lo interpreta por el editor de la columna —número,
    * fecha, casilla, opción por su valor o su etiqueta, lista separada por
    * comas—. Devolver `undefined` rechaza la celda, que queda afuera del lote.
+   *
+   * `row` es la fila con lo que el mismo pegado ya le escribió a la izquierda,
+   * igual que en `validate`.
    */
   parse?: (text: string, row: TRow, rowIndex: number) => CellValue
   /**
@@ -389,8 +398,21 @@ export interface DataTableColumn<TRow> {
    * control, y abrir un editor incluido en su lugar sería peor que no abrir.
    */
   editor?: CellEditorType
-  /** Opciones para los renderers y editores de tipo `select`, `badge` y `tags`. */
-  options?: readonly CellOption[]
+  /**
+   * Opciones para los renderers y editores de tipo `select`, `badge` y `tags`.
+   *
+   * Una lista fija, o una FUNCIÓN de la fila cuando las opciones dependen de
+   * otra columna —los puestos de un área, los modelos de una marca—. Con una
+   * función, cada vía resuelve contra las opciones de SU fila: la etiqueta que
+   * se pinta y la que se copia, el desplegable del editor, las `options` que
+   * recibe el slot `#editor` y la lectura de un texto pegado, que rechaza una
+   * etiqueta que esa fila no ofrece. Ver {@link CellOptionsResolver}.
+   *
+   * Para leerlas desde afuera conviene no tocar `column.options` directo —puede
+   * ser una función— sino las `options` que ya trae el slot `#editor`, o
+   * `ctx.options` en un renderer propio ({@link CellRenderContext.options}).
+   */
+  options?: readonly CellOption[] | CellOptionsResolver<TRow>
   /** Valor mínimo del editor `number`. Se traslada al atributo `min` del input. */
   min?: number
   /** Valor máximo del editor `number`. Se traslada al atributo `max` del input. */
@@ -471,6 +493,12 @@ export interface CellEditorSlotProps<TRow> {
    */
   error: string | null
   /**
+   * Las opciones de la columna para ESTA fila: `column.options` ya resuelto,
+   * sea una lista fija o una función de la fila. Es lo que conviene darle al
+   * desplegable del slot, en lugar de leer `column.options` directo.
+   */
+  options: readonly CellOption[]
+  /**
    * Cierra el editor confirmando `newValue`.
    *
    * Recorre exactamente la misma tubería que el editor incluido: emite
@@ -480,8 +508,14 @@ export interface CellEditorSlotProps<TRow> {
    * El valor se entrega TAL CUAL: no hay coacción de tipos, a diferencia del
    * editor incluido, que recibe un string de un control del DOM y tiene que
    * devolverlo al tipo original. Aquí el consumidor ya tiene el valor tipado.
+   *
+   * Con `options.move` la selección se mueve después de confirmar, igual que con
+   * las teclas del editor incluido: `'right'` es `Tab`, `'left'` es
+   * `Shift`+`Tab`, `'down'` es `Enter` y `'up'` es `Shift`+`Enter`. Un valor que
+   * `validate` rechaza deja el editor abierto y no mueve nada. Ver
+   * {@link CellEditorMove}.
    */
-  commit(newValue: CellValue): void
+  commit(newValue: CellValue, options?: CellEditorCommitOptions): void
   /**
    * Cierra el editor descartando la edición.
    *
@@ -490,6 +524,45 @@ export interface CellEditorSlotProps<TRow> {
    */
   cancel(): void
 }
+
+/**
+ * Adónde va la selección después de confirmar una edición.
+ *
+ * Son las cuatro teclas con las que se captura en una hoja de cálculo:
+ *
+ * | Valor     | Tecla del editor incluido | Qué hace                                             |
+ * | --------- | ------------------------- | ----------------------------------------------------- |
+ * | `'right'` | `Tab`                     | La celda de la derecha; al final, la primera de abajo. |
+ * | `'left'`  | `Shift`+`Tab`             | La de la izquierda; al principio, la última de arriba. |
+ * | `'down'`  | `Enter`                   | La de abajo.                                          |
+ * | `'up'`    | `Shift`+`Enter`           | La de arriba.                                         |
+ *
+ * `'right'` y `'left'` siguen el orden de lectura, como `Tab` sin editor: al
+ * llegar al borde pasan a la fila de al lado en lugar de quedarse.
+ */
+export type CellEditorMove = 'right' | 'left' | 'down' | 'up'
+
+/** Segundo argumento de {@link CellEditorSlotProps.commit}. */
+export interface CellEditorCommitOptions {
+  /** Adónde llevar la selección si el valor se acepta. Sin esto, no se mueve. */
+  move?: CellEditorMove
+}
+
+/**
+ * Opciones que dependen de la fila. Ver {@link DataTableColumn.options}.
+ *
+ * `rowIndex` indexa `rows`, igual que en `format` y en los eventos.
+ *
+ * Corre en el camino de pintado —una vez por celda que cambia— y en cada celda
+ * de un pegado, así que tiene que ser barata: devolver una lista ya armada por
+ * clave (`puestosPorArea[row.area]`) y no filtrarla en cada llamada. Devolver
+ * SIEMPRE el mismo array para la misma clave además le ahorra al desplegable
+ * del editor rehacer sus opciones.
+ *
+ * Una cabecera de grupo no es una fila: su etiqueta se resuelve con la primera
+ * fila del grupo.
+ */
+export type CellOptionsResolver<TRow> = (row: TRow, rowIndex: number) => readonly CellOption[]
 
 /**
  * Una opción de un conjunto cerrado de valores.
@@ -829,8 +902,25 @@ export interface CellRenderContext<TRow> {
   readonly row: TRow
   /** Índice de la fila dentro de la prop `rows`. */
   readonly rowIndex: number
-  /** La definición de columna, con su `format` y sus opciones. */
+  /**
+   * La definición de columna, con su `format` y sus opciones.
+   *
+   * Sus `options` pueden ser una función de la fila: para leerlas, usa
+   * {@link CellRenderContext.options}, que ya viene resuelta.
+   */
   readonly column: DataTableColumn<TRow>
+  /**
+   * Las opciones de esta celda, ya resueltas para ESTA fila. `undefined` si la
+   * columna no declara ninguna.
+   *
+   * Existe porque {@link DataTableColumn.options} puede ser una función
+   * `(row, rowIndex) => CellOption[]`, y un renderer que hiciera
+   * `ctx.column.options.find(...)` dejaría de compilar —y, con una función, no
+   * tendría cómo resolverla igual que la tabla—. Aquí llega la misma lista que
+   * usan el pintado, el copiado y el editor de esa celda, sea la columna de un
+   * array fijo o de una función.
+   */
+  readonly options?: readonly CellOption[]
   /** Si esta celda es la que tiene el editor abierto encima. */
   readonly isEditing: boolean
 }
@@ -1117,6 +1207,30 @@ export interface DataTableProps<TRow> {
    */
   zoom?: number
   /**
+   * Si `Ctrl`+rueda —y el pellizco del trackpad— sobre la tabla cambian el
+   * `zoom`. Por defecto `false`.
+   *
+   * Encendida, la tabla toma ese gesto para sí: nunca amplía la PÁGINA, ni
+   * siquiera en los topes de la banda, y pide el zoom nuevo por `update:zoom`.
+   * Una muesca de mouse cambia un 10%, como el zoom del navegador; el pellizco es
+   * continuo, y sus deltas diminutos se acumulan en vez de perderse. Lo que se
+   * anuncia es múltiplo de `0.05`, dentro de `[0.5, 2]`. Cuando el nuevo valor
+   * vuelve como prop, el scroll se ajusta para que el contenido que estaba bajo
+   * el cursor siga ahí.
+   *
+   * Solo cuenta `Ctrl`, no `Cmd`: el pellizco llega como una rueda con
+   * `ctrlKey` también en Mac, y `Cmd`+rueda no es un gesto de zoom en ningún
+   * sistema.
+   *
+   * ## Por qué viene apagada
+   *
+   * Porque la tabla solo PIDE el zoom: el valor lo posee el padre. Con
+   * `v-model:zoom` el pedido se atiende; con un `:zoom` fijo no cambiaría nada,
+   * y aun así el gesto se lo habría quitado al navegador. Encenderla es declarar
+   * que alguien escucha `update:zoom`.
+   */
+  wheelZoom?: boolean
+  /**
    * Si la tabla ocupa la pantalla completa. Por defecto `false`.
    *
    * Es un `v-model:fullscreen` y funciona con la **Fullscreen API nativa**: la
@@ -1327,6 +1441,26 @@ export interface DataTableProps<TRow> {
   /** Dibuja separadores de celda. */
   bordered?: boolean
   /**
+   * Clases propias para cada fila de datos, como las que acepta `:class`: un
+   * texto, una lista o un objeto de banderas.
+   *
+   * Sirve para marcar el ESTADO de una fila —pendiente, con error, guardada—
+   * sin tocar sus celdas. Las clases van sobre `.dt-row`, al lado de las de la
+   * tabla, que no se pisan. `rowIndex` indexa `rows`, igual que en los eventos.
+   * No se aplica a las cabeceras de grupo ni a las filas que el servidor todavía
+   * no mandó.
+   *
+   * Corre en cada pintado, una vez por fila visible: tiene que ser barata y no
+   * leer el DOM. Si depende de algo que no está en la fila —un mapa de errores,
+   * por ejemplo—, pasar una función nueva cuando ese algo cambie repinta la
+   * tabla; `refresh()` también.
+   *
+   * Como con `cellClass`, las reglas CSS tienen que ser globales: el pool crea
+   * las filas fuera de Vue y no llevan el atributo de `<style scoped>`.
+   */
+  rowClass?: (row: TRow, rowIndex: number) => RowClassValue
+
+  /**
    * Visibilidad por clave de columna. `v-model:column-visibility`.
    *
    * Si se omite, la tabla mantiene el estado internamente y funciona sola. Si se
@@ -1451,6 +1585,43 @@ export interface DataTableProps<TRow> {
    */
   fillHandle?: FillHandleMode
   /**
+   * Agrega filas cuando un pegado no entra. Por defecto no está, y un bloque más
+   * largo que lo que queda de tabla se recorta en el borde, como siempre.
+   *
+   * Con ella, pegar un bloque de `Ctrl`+`V` que se pasa de la última fila le pide
+   * al consumidor las que faltan: `appendRows(cantidad)`. El consumidor las agrega
+   * AL FINAL de su array —el mismo `rows` que le pasa a la tabla, con filas
+   * vacías o con lo que corresponda— y la tabla espera a que lleguen por la prop
+   * —si devuelve una promesa, también a que se resuelva— para seguir con el MISMO
+   * pegado: todo llega en un solo `cellsCommit` con `source: 'paste'`, incluidas
+   * las filas nuevas, y queda seleccionado entero.
+   *
+   * Las filas nuevas pasan por las mismas reglas que las demás: una celda que no
+   * es `editable` o que `validate` rechaza queda como la dejó el consumidor.
+   * Deshacer el pegado revierte los valores, no las filas agregadas.
+   *
+   * Si agrega menos de las pedidas, se pega lo que entra. No se pide nada con
+   * agrupación activa —una fila nueva no tiene grupo donde caer— ni en modo
+   * servidor, ni cuando la selección repite el bloque como mosaico. Mientras se
+   * espera, otro pegado se ignora.
+   *
+   * **Las filas nuevas tienen que quedar al FINAL de `rows` tal como se
+   * muestra.** La tabla no sabe cuáles son las nuevas: sigue pegando en las
+   * posiciones que venían después de la última. Si `rows` sale de un `computed`
+   * que ordena o filtra, las filas vacías pueden caer en otro lugar —arriba, por
+   * orden alfabético— o no aparecer, y el pegado escribiría sobre filas que ya
+   * existían. En ese caso, agrega las filas al final de lo que ve la tabla, no
+   * solo a la fuente del `computed`.
+   *
+   * @example
+   * ```ts
+   * const appendRows = (count: number) => {
+   *   filas.value = [...filas.value, ...Array.from({ length: count }, nuevaFila)]
+   * }
+   * ```
+   */
+  appendRows?: (count: number) => void | Promise<void>
+  /**
    * Cuántos gestos recuerda el historial de `Ctrl`+`Z`. Por defecto `100`; `0`
    * lo apaga.
    *
@@ -1552,6 +1723,23 @@ export type FillHandleMode = 'none' | 'axis' | 'area'
 
 /** Identidad de una fila, tal como la devuelve {@link DataTableProps.rowKey}. */
 export type RowKey = string | number
+
+/**
+ * Lo que devuelve {@link DataTableProps.rowClass}: lo mismo que acepta `:class`
+ * en Vue. Un texto con una o varias clases, una lista de clases o un objeto cuyas
+ * claves en `true` son las clases que van. `null`, `undefined` y el texto vacío
+ * no ponen ninguna.
+ *
+ * La lista acepta además `false`, `null` y `undefined`, que se descartan: es lo
+ * que permite escribir `[fila.error && 'fila-error', 'fila-base']`, igual que en
+ * un `:class`. Sin eso, la condición falsa pondría una clase llamada `false`.
+ */
+export type RowClassValue =
+  | string
+  | readonly (string | false | null | undefined)[]
+  | Readonly<Record<string, boolean>>
+  | null
+  | undefined
 
 /**
  * Qué filas marcó el usuario con las casillas. `v-model:selected-rows`.
@@ -1768,9 +1956,11 @@ export interface CellRange {
  * - `'paste'`: `Ctrl`+`V`.
  * - `'fill'`: arrastrar el tirador de relleno, el cuadradito de la esquina de la
  *   selección. Ver {@link DataTableProps.fillHandle}.
+ * - `'fillDown'`: `Ctrl`+`D`, que copia la primera fila de la selección sobre
+ *   el resto —o, con una sola fila, la de arriba—.
  * - `'undo'` / `'redo'`: `Ctrl`+`Z` y `Ctrl`+`Y`, o los métodos `undo()` y `redo()`.
  */
-export type EditSource = 'editor' | 'clear' | 'paste' | 'fill' | 'undo' | 'redo'
+export type EditSource = 'editor' | 'clear' | 'paste' | 'fill' | 'fillDown' | 'undo' | 'redo'
 
 /** Las vías que escriben varias celdas de una vez, y por eso llegan como lote. */
 export type BatchEditSource = Exclude<EditSource, 'editor'>
@@ -1868,7 +2058,7 @@ export interface EditCommitEvent<TRow> {
 
 /**
  * Se emite UNA vez por cada gesto que escribe varias celdas: vaciar, pegar,
- * rellenar, deshacer y rehacer.
+ * rellenar —con el tirador o con `Ctrl`+`D`—, deshacer y rehacer.
  *
  * Es el equivalente en lote de {@link EditCommitEvent}, y cada cambio tiene su
  * misma forma. Existe porque la tabla nunca escribe en `rows`: un `editCommit`

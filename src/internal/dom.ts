@@ -7,7 +7,7 @@ import {
   TEXT_RENDERER_TYPE,
 } from './renderers/shared'
 import type { CellRendererLifecycle } from './renderers/shared'
-import type { CellRendererHandle } from '../types'
+import type { CellRendererHandle, RowClassValue } from '../types'
 
 /**
  * Creación y mutación de los nodos que recicla `useRowPool`.
@@ -134,6 +134,8 @@ export interface PooledRowElement extends HTMLDivElement {
   __dtAriaSetSize: number
   /** `true` mientras la fila muestra un marcador porque sus datos no llegaron. */
   __dtPlaceholder: boolean
+  /** Clases aplicadas por última vez desde la prop `rowClass`, separadas por espacio. */
+  __dtCustomClass: string
 }
 
 /**
@@ -363,6 +365,7 @@ export function createRowElement(): PooledRowElement {
     __dtAriaPosInSet: -1,
     __dtAriaSetSize: -1,
     __dtPlaceholder: false,
+    __dtCustomClass: '',
   })
 }
 
@@ -969,6 +972,27 @@ export function setCellCustomClass(node: PooledCellElement, next: string): void 
   const previous = node.__dtCustomClass
   if (previous === next) return
   node.__dtCustomClass = next
+  swapClassTokens(node, previous, next)
+}
+
+/**
+ * Reemplaza las clases que devolvió la prop `rowClass`.
+ *
+ * Es la misma disciplina que {@link setCellCustomClass}, un nivel más arriba: se
+ * sacan los tokens de la vez anterior y se ponen los nuevos, sin tocar las
+ * clases estructurales de la fila (`dt-row`, el rayado, la fila activa). Como el
+ * nodo se recicla, sacar lo anterior no es una limpieza opcional: es lo que
+ * evita que la clase de una fila pase a la que hereda su nodo.
+ */
+export function setRowCustomClass(node: PooledRowElement, next: string): void {
+  const previous = node.__dtCustomClass
+  if (previous === next) return
+  node.__dtCustomClass = next
+  swapClassTokens(node, previous, next)
+}
+
+/** Saca los tokens de `previous` y pone los de `next`, separados por espacios. */
+function swapClassTokens(node: HTMLElement, previous: string, next: string): void {
   if (previous !== '') {
     for (const token of previous.split(/\s+/)) {
       if (token !== '') node.classList.remove(token)
@@ -979,6 +1003,45 @@ export function setCellCustomClass(node: PooledCellElement, next: string): void 
       if (token !== '') node.classList.add(token)
     }
   }
+}
+
+/**
+ * Reduce lo que acepta un `:class` de Vue —texto, lista u objeto de
+ * banderas— a un texto de clases separadas por espacio.
+ *
+ * Es la forma que guarda el caché del nodo: comparar dos textos es lo que deja
+ * que una fila cuya clase no cambió atraviese el pintado sin tocar `classList`.
+ */
+export function toClassText(value: RowClassValue): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value.trim()
+  if (isClassList(value)) {
+    // Las entradas falsas se saltan, como en `:class`: `[error && 'fila-error']`
+    // es la forma idiomática de una clase condicional, y un `join` directo
+    // convertiría el `false` en una clase llamada "false".
+    let text = ''
+    for (const entry of value) {
+      if (!entry) continue
+      const token = entry.trim()
+      if (token === '') continue
+      text = text === '' ? token : `${text} ${token}`
+    }
+    return text
+  }
+  let text = ''
+  for (const token of Object.keys(value)) {
+    if (value[token] !== true) continue
+    text = text === '' ? token : `${text} ${token}`
+  }
+  return text
+}
+
+/**
+ * Guarda de lista. `Array.isArray` no estrecha una lista `readonly`, y sin esto
+ * la rama del objeto seguiría viendo la lista como posible.
+ */
+function isClassList(value: unknown): value is readonly (string | false | null | undefined)[] {
+  return Array.isArray(value)
 }
 
 /* ------------------------------------------------- Cabeceras de grupo */

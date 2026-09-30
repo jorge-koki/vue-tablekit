@@ -52,9 +52,11 @@ const columnas: DataTableColumn<Empleado>[] = [
   `Ctrl`+`A`, y si quieres, una columna o una fila entera con un clic en su encabezado o su número.
 - **Copiar y pegar con Excel.** `Ctrl`+`C` copia lo que ves —la etiqueta del estado, el importe con
   separadores— y se pega como tabla en cualquier hoja de cálculo. `Ctrl`+`V` pega desde Excel y
-  entiende números con comas y moneda, fechas, casillas y opciones por su etiqueta.
+  entiende números con comas y moneda, fechas, casillas y opciones por su etiqueta. Con
+  `append-rows`, un bloque que no cabe te pide las filas que faltan y sigue pegando sobre ellas.
 - **Tirador de relleno**, opcional: el cuadrito de la esquina de la selección se arrastra para
   copiar lo seleccionado. En un eje, como Excel, o en área, también en diagonal.
+- `Ctrl`+`D` rellena hacia abajo: copia la primera fila de la selección sobre las demás.
 - `Supr` vacía la selección y `Ctrl`+`Z` / `Ctrl`+`Y` deshacen y rehacen cualquier gesto, completo.
 
 ### Edición
@@ -86,6 +88,8 @@ const columnas: DataTableColumn<Empleado>[] = [
   carga mientras llegan.
 - **Alturas de fila distintas**, decididas por ti fila por fila, y numeración de filas a la
   izquierda.
+- **Clases propias por fila** con `row-class`, como un `:class`, para marcar una fila pendiente o con
+  error sin tocar sus celdas.
 
 ### Aspecto
 
@@ -96,6 +100,7 @@ const columnas: DataTableColumn<Empleado>[] = [
 - Modo compacto, grilla completa o solo líneas entre filas, bordes y esquinas redondeadas.
 - **Zoom del 50% al 200%**, como el de una hoja de cálculo. Escala las medidas en vez de agrandar
   píxeles, así que el puntero sigue cayendo donde apuntas y los anchos guardados no se inflan.
+  Con `wheel-zoom`, también responde a `Ctrl`+rueda y al pellizco del trackpad, sin ampliar la página.
 - **Pantalla completa** con la Fullscreen API del navegador, no con un `position: fixed` que
   cualquier ancestro con `transform` deja encerrado en su panel. Con una barra propia para poner tus
   controles, que es lo único que queda a la vista ahí adentro.

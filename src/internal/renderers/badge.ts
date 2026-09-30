@@ -5,6 +5,7 @@ import {
   fallbackText,
   findOption,
   NEUTRAL_COLOR_TOKEN,
+  optionsOf,
   writeCustomProperty,
   writeText,
 } from './shared'
@@ -65,12 +66,12 @@ function labelOf(option: CellOption | null, value: unknown): string {
  * copiar algo que el usuario no vio nunca.
  */
 export function badgeTextOf<TRow>(ctx: CellRenderContext<TRow>): string {
-  return labelOf(findOption(ctx.column.options, ctx.value), ctx.value)
+  return labelOf(findOption(optionsOf(ctx), ctx.value), ctx.value)
 }
 
 /** Aplica el valor sobre una píldora ya construida. Compartido con `select`. */
 export function updateBadgeState<TRow>(state: BadgeState, ctx: CellRenderContext<TRow>): void {
-  const option = findOption(ctx.column.options, ctx.value)
+  const option = findOption(optionsOf(ctx), ctx.value)
   const label = labelOf(option, ctx.value)
   const color = option?.color ?? NEUTRAL_COLOR_TOKEN
 

@@ -301,6 +301,13 @@ const dense = shallowRef(false)
  * preferencia de la persona, de la pantalla o de la sesión—, y el componente no
  * tiene manera de saber cuál de las tres. Por eso tampoco se persiste con el
  * resto del layout.
+ *
+ * La tabla lleva además `wheel-zoom`: `Ctrl`+rueda y el pellizco del trackpad
+ * cambian este mismo valor. Se puede encender acá porque el modelo lo posee esta
+ * pantalla y lo devuelve por `v-model:zoom`; con un `:zoom` fijo, el gesto le
+ * quitaría el zoom al navegador sin cambiar nada. Los valores que pide la rueda
+ * son múltiplos de 0.05, así que el escalón puede mostrar un 115%: sus botones
+ * cuentan desde el peldaño más cercano a ese valor.
  */
 const zoom = shallowRef(1)
 
@@ -641,6 +648,7 @@ function onCellsCommit(event: CellsCommitEvent<ProjectRow>): void {
     clear: 'vaciado',
     paste: 'pegado',
     fill: 'relleno',
+    fillDown: 'relleno hacia abajo',
     undo: 'deshecho',
     redo: 'rehecho',
   }[event.source]
@@ -800,6 +808,7 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
             :row-selection="rowSelection"
             :dense="dense"
             v-model:zoom="zoom"
+            wheel-zoom
             v-model:fullscreen="fullscreen"
             :row-height="rowHeight"
             :selection-mode="selectionMode"
@@ -863,11 +872,11 @@ function onAfterEdit(event: AfterEditEvent<ProjectRow>): void {
               es uno solo para toda la tabla y el consumidor decide qué control
               montar en cada una. El resto está en el README del componente.
             -->
-            <template #editor="{ column, value, commit }">
+            <template #editor="{ column, value, options, commit }">
               <DemoStatusPicker
                 v-if="column.key === 'status'"
                 :value="value"
-                :options="column.options ?? []"
+                :options="options"
                 @commit="commit"
               />
             </template>

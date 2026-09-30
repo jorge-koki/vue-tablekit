@@ -6,7 +6,7 @@ import type {
   GroupByState,
   GroupIdSegment,
 } from '../types'
-import { formatCellValue, readCellValue } from './values'
+import { formatCellValue, readCellValue, resolveColumnOptions } from './values'
 import { findOption } from './renderers/shared'
 
 /**
@@ -173,14 +173,20 @@ export function groupIdColumnPath(id: string): string[] {
  *
  * @param emptyLabel - Texto de los valores ausentes. Se recibe como parámetro y
  * no se lee de la constante para que la prop `emptyGroupLabel` pueda traducirlo.
+ * @param row - Una fila del grupo —la primera—, para una columna cuyas opciones
+ * dependen de la fila: todas las del grupo comparten el valor, y es la única
+ * fila a mano cuando se crea la cabecera.
+ * @param rowIndex - Índice de `row` dentro de `rows`.
  */
 export function groupValueLabel<TRow>(
   column: DataTableColumn<TRow> | undefined,
   value: CellValue,
   emptyLabel: string = EMPTY_GROUP_LABEL,
+  row?: TRow,
+  rowIndex = -1,
 ): string {
   if (value === null || value === undefined) return emptyLabel
-  const option = findOption(column?.options, value)
+  const option = findOption(column ? resolveColumnOptions(column, row, rowIndex) : undefined, value)
   if (option) return option.label
   const text = formatCellValue(value)
   return text === '' ? emptyLabel : text

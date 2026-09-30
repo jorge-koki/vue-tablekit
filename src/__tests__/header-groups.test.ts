@@ -144,6 +144,27 @@ describe('encabezados agrupados', () => {
     harness.unmount()
   })
 
+  it('cambiar el ancho de una columna ensancha el título de su grupo', async () => {
+    const harness = await mountGrid()
+    await harness.wrapper.setProps({ columnWidths: { a: 150 } })
+    await harness.flush()
+
+    expect(spans(harness)[0]).toMatchObject({ label: 'Datos', width: '250px' })
+    harness.unmount()
+  })
+
+  it('las columnas ancladas al final llevan su título en la tira del final', async () => {
+    const columns = COLUMNS.map((column) =>
+      column.headerGroup === 'Montos' ? { ...column, pinned: 'end' as const } : column,
+    )
+    const harness = await mountGrid({ columns })
+    const endStrip = harness.grid.querySelector('.dt-header-group-row .dt-header-pinned--end')
+
+    expect(endStrip?.querySelectorAll('.dt-header-group')).toHaveLength(1)
+    expect(endStrip?.querySelector('.dt-header-group')?.getAttribute('aria-colspan')).toBe('2')
+    harness.unmount()
+  })
+
   it('con columnSelection, un clic en el título selecciona sus columnas enteras', async () => {
     const harness = await mountGrid({ columnSelection: true })
     const title = harness.grid.querySelector('.dt-header-group')

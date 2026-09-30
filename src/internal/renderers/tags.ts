@@ -5,6 +5,7 @@ import {
   fallbackText,
   findOption,
   NEUTRAL_COLOR_TOKEN,
+  optionsOf,
   writeHidden,
 } from './shared'
 import type { AnyCellRenderer } from './shared'
@@ -87,11 +88,12 @@ function labelOf(option: CellOption | null, entry: unknown): string {
  */
 function textOf<TRow>(ctx: CellRenderContext<TRow>): string {
   readEntries(ctx.raw, ctx.value)
+  const options = optionsOf(ctx)
   let text = ''
   for (let index = 0; index < scratch.length; index += 1) {
     const entry = scratch[index]
     if (index > 0) text += ', '
-    text += labelOf(findOption(ctx.column.options, entry), entry)
+    text += labelOf(findOption(options, entry), entry)
   }
   return text
 }
@@ -117,6 +119,9 @@ export const tagsRenderer: AnyCellRenderer = {
 
     readEntries(ctx.raw, ctx.value)
     const count = scratch.length
+    // Una vez por celda y no por píldora: con opciones por fila es una llamada
+    // al consumidor.
+    const options = optionsOf(ctx)
 
     // Se crece solo hasta el máximo que esta celda haya necesitado alguna vez.
     while (state.pills.length < count) state.pills.push(createPill(state.root))
@@ -135,7 +140,7 @@ export const tagsRenderer: AnyCellRenderer = {
       if (writeHidden(pill.element, pill.hidden, false)) pill.hidden = false
 
       const entry = scratch[index]
-      const option = findOption(ctx.column.options, entry)
+      const option = findOption(options, entry)
       const label = labelOf(option, entry)
       const color = option?.color ?? NEUTRAL_COLOR_TOKEN
 

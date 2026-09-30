@@ -4,6 +4,8 @@ import type {
   AfterEditEvent,
   BatchEditSource,
   BeforeEditEvent,
+  CellEditorCommitOptions,
+  CellEditorMove,
   CellEditorSlotProps,
   CellPosition,
   CellRange,
@@ -88,6 +90,7 @@ import {
   textRenderer,
 } from './internal/renderers'
 import { EMPTY_GROUP_LABEL } from './internal/aggregations'
+import { toClassText } from './internal/dom'
 import { buildRangeText, cellText, parseClipboardText } from './internal/clipboard'
 import {
   cellValuesEqual,
@@ -98,10 +101,17 @@ import {
   readCellValue,
   readRawValue,
   REJECTED_VALUE,
+  resolveColumnOptions,
   textToCellValue,
   toCellValue,
 } from './internal/values'
 import type { ParsedCellValue } from './internal/values'
+import {
+  accumulateWheelZoom,
+  anchoredScroll,
+  snapZoom,
+  wheelDeltaInPixels,
+} from './internal/wheelZoom'
 import {
   createTextEstimator,
   MEASURED_TEXT_CANDIDATES,
@@ -149,6 +159,9 @@ const props = withDefaults(defineProps<DataTableProps<TRow>>(), {
   // otra prop. Se resuelven más abajo en un `computed`.
   dense: false,
   zoom: DEFAULT_ZOOM,
+  // Apagado: la tabla solo PIDE el zoom, y con un `:zoom` fijo el gesto no haría
+  // nada salvo quitarle al navegador su propio `Ctrl`+rueda.
+  wheelZoom: false,
   fullscreen: false,
   overscan: DEFAULT_OVERSCAN,
   defaultColumnWidth: DEFAULT_COLUMN_WIDTH,
@@ -1112,6 +1125,213 @@ const rowViewportHeight = computed(() =>
 function liveRowViewportHeight(): number {
   return Math.max(0, scroll.live.viewportHeight - headerHeight.value)
 }
+
+/* ---------------------------------------------------------- Zoom con la rueda */
+
+/**
+ * Un zoom pedido con la rueda que todavía no volvió como prop, junto con lo que
+ * hace falta para anclarlo cuando vuelva.
+ *
+ * Existe porque la tabla no escribe el zoom: lo PIDE por `update:zoom` y el
+ * padre lo devuelve —o no— como prop. El scroll no se puede ajustar en el
+ * momento del pedido, porque el contenido todavía mide lo de antes; se ajusta
+ * cuando el valor pedido llega de verdad, y para eso hay que recordar dónde
+ * estaba todo cuando se pidió.
+ */
+interface WheelZoomRequest {
+  /** El zoom que se anunció por `update:zoom`. */
+  target: number
+  /** El zoom vigente cuando se tomó el scroll de abajo: la base del cociente. */
+  from: number
+  /** Scroll del viewport en el momento del pedido, en px. */
+  scrollTop: number
+  scrollLeft: number
+  /** Posición del cursor respecto del borde interior del viewport, en px. */
+  offsetX: number
+  offsetY: number
+}
+
+/**
+ * El zoom EXACTO que viene acumulando la rueda, sin redondear, o `null` para
+ * arrancar del valor de la prop.
+ *
+ * Es lo que hace continuo al pellizco del trackpad: sus deltas son de 1 o 2 px,
+ * un 0.1–0.2% de zoom cada uno, y redondeados uno por uno al paso de 0.05 no
+ * moverían nada nunca. Guardado sin redondear, se suman hasta cruzar el paso.
+ *
+ * Tiene una sola fuente de verdad por encima: la prop. Cuando el zoom cambia
+ * por un camino que no es esta rueda —los botones del consumidor, otro
+ * control—, este valor ya no describe nada y se descarta (ver el `watch` de
+ * más abajo). Cuando cambia porque el padre atendió el pedido, se conserva:
+ * reemplazarlo por el valor redondeado haría que el gesto se acelerara o
+ * frenara cada vez que cruza un escalón. Y cuando el pedido vence sin que la
+ * prop cambie, también se descarta: ya no acompaña a lo que está pintado.
+ */
+let wheelZoomExact: number | null = null
+
+/** El pedido en vuelo, o `null`. Ver {@link WheelZoomRequest}. */
+let wheelZoomRequest: WheelZoomRequest | null = null
+
+/**
+ * `Ctrl`+rueda y pellizco del trackpad sobre la tabla.
+ *
+ * Solo con `wheelZoom` encendida y solo con `ctrlKey`: sin eso, el evento sigue
+ * de largo sin `preventDefault`, y es una rueda común que scrollea la tabla. No
+ * se mira `metaKey`: el pellizco llega como rueda con `ctrlKey` también en Mac,
+ * y `Cmd`+rueda no es un gesto de zoom en ningún sistema.
+ *
+ * Una vez tomado, el `preventDefault` es INCONDICIONAL, también en los topes de
+ * la banda y cuando el delta no alcanza a cambiar el escalón: dejarlo pasar ahí
+ * haría que el navegador ampliara la página entera justo cuando la tabla dejó
+ * de poder, un salto que el usuario no pidió.
+ *
+ * Solo se lee `deltaY`. Es el eje por el que llegan tanto la rueda vertical como
+ * el pellizco; un `deltaX` con `Ctrl` es un desplazamiento lateral del trackpad,
+ * no un pedido de escala.
+ */
+function onViewportWheel(event: WheelEvent): void {
+  if (!props.wheelZoom || !event.ctrlKey) return
+  event.preventDefault()
+
+  const viewport = viewportEl.value
+  if (!viewport) return
+
+  const pixels = wheelDeltaInPixels(event.deltaY, event.deltaMode, scroll.live.viewportHeight)
+  const exact = accumulateWheelZoom(wheelZoomExact ?? zoom.value, pixels)
+  wheelZoomExact = exact
+
+  // Se compara contra el pedido en vuelo antes que contra la prop: si todavía
+  // no volvió, la prop es vieja y cada evento repetiría el mismo pedido.
+  const next = snapZoom(exact)
+  const current = wheelZoomRequest?.target ?? zoom.value
+  if (next === current) return
+
+  // El redondeo no puede ir contra el gesto. Con la prop fuera de la grilla de
+  // 0.05 —un 1.07 que puso el consumidor—, un poco de zoom-in da 1.072 y
+  // redondea a 1.05: pedirlo ACHICARÍA la tabla con un gesto de ampliar, y lo
+  // mismo al revés desde un 1.33. Se descarta el pedido pero no el acumulador:
+  // el gesto sigue sumando y, al cruzar el punto medio del escalón, el redondeo
+  // ya cae del lado correcto. Un delta nulo no tiene dirección y tampoco pide.
+  const wanted = pixels < 0 ? next > current : pixels > 0 ? next < current : false
+  if (!wanted) return
+
+  // `getBoundingClientRect` da el borde EXTERIOR; `clientLeft` / `clientTop` son
+  // el grosor del borde, y restarlos deja el offset medido desde donde empieza
+  // el contenido que scrollea.
+  //
+  // El scroll se lee del VIEWPORT y no de `scroll.live`, que va atrasado justo
+  // en este caso: el ancla del pedido anterior movió el scroll con `scrollTo`,
+  // que no toca el espejo —lo actualiza el evento `scroll`, y el evento llega
+  // recién en el paso de render siguiente—. En medio de un gesto continuo, el
+  // pedido de al lado se anclaría contra la posición de ANTES del ancla y la
+  // tabla saltaría. Leerlo cuesta poco: esto corre una vez por escalón de 5%,
+  // no por evento.
+  const box = viewport.getBoundingClientRect()
+  const request: WheelZoomRequest = {
+    target: next,
+    from: zoom.value,
+    scrollTop: viewport.scrollTop,
+    scrollLeft: viewport.scrollLeft,
+    offsetX: event.clientX - box.left - viewport.clientLeft,
+    offsetY: event.clientY - box.top - viewport.clientTop,
+  }
+  wheelZoomRequest = request
+  emit('update:zoom', next)
+
+  // El plazo del pedido es el tick. Con `v-model:zoom`, lo que pasa DENTRO de
+  // este emit es que cambia el estado del padre y se agenda su re-render; la
+  // prop nueva baja a la tabla cuando el planificador vacía esa cola, y el
+  // `watch` de abajo consume el pedido en ese mismo flush. Este `nextTick` se
+  // registra después del emit, así que corre detrás de ese flush: si el pedido
+  // sigue acá es que nadie lo atendió —un `:zoom` fijo, un padre que lo ignora
+  // o que lo aplica más tarde por su cuenta—.
+  //
+  // Se descartan las dos cosas. El scroll guardado ya no describe nada: si el
+  // mismo valor llegara más tarde por otro lado, anclarlo contra este momento
+  // movería la tabla a un lugar arbitrario. Y el acumulador se despegó de lo
+  // pintado: conservarlo haría que cada rueda pidiera desde un zoom que nadie
+  // ve —1.1, 1.21, 1.33…— y que una rueda para afuera pidiera un valor por
+  // encima del que está en pantalla. La próxima arranca de la prop.
+  void nextTick(() => {
+    if (wheelZoomRequest !== request) return
+    wheelZoomRequest = null
+    wheelZoomExact = null
+  })
+}
+
+/**
+ * Cuando el zoom cambia, se decide si fue la rueda o fue otro.
+ *
+ * Si el valor nuevo es el que la rueda pidió, se ancla: después del render —con
+ * el contenido ya midiendo lo nuevo, que es lo que le deja al navegador aceptar
+ * el scroll— se lleva cada eje a `(scroll + offset) * cociente - offset`, que
+ * deja quieto el punto que estaba bajo el cursor.
+ *
+ * El cociente sale del zoom que REALMENTE se aplicó, no del factor exacto de la
+ * rueda: lo que se pinta es el valor redondeado.
+ *
+ * ## Por qué la misma cuenta vale con el encabezado pegado
+ *
+ * En vertical, las filas empiezan debajo del encabezado, que es `sticky` pero
+ * ocupa alto real del contenido. Parecería que hay que descontarlo, y no hace
+ * falta: el encabezado escala con el mismo factor que las filas, así que el
+ * contenido entero —encabezado incluido— es una escala uniforme del anterior y
+ * la cuenta de un solo término es exacta. Lo mismo en horizontal con la regleta
+ * y los anchos de columna.
+ *
+ * Es aproximada en dos casos, y se aceptan: con el cursor SOBRE algo pegado —el
+ * encabezado, la regleta, una columna anclada— lo que queda quieto es el
+ * contenido que scrollea por debajo, no lo que el cursor tapa; y el navegador
+ * acota el scroll al contenido, así que cerca de un extremo el punto se corre lo
+ * que haga falta para no mostrar vacío.
+ *
+ * Si el valor nuevo NO es el pedido —un botón del consumidor, un `setProps`—, el
+ * acumulador se descarta y la próxima rueda arranca de la prop.
+ */
+watch(zoom, (current) => {
+  const request = wheelZoomRequest
+  wheelZoomRequest = null
+  if (request === null || current !== request.target) {
+    wheelZoomExact = null
+    return
+  }
+
+  const ratio = current / request.from
+  void nextTick(() => {
+    scroll.scrollTo({
+      top: anchoredScroll(request.scrollTop, request.offsetY, ratio),
+      left: anchoredScroll(request.scrollLeft, request.offsetX, ratio),
+    })
+  })
+})
+
+/**
+ * El listener de la rueda se registra a mano, y solo con la prop encendida.
+ *
+ * A mano, porque tiene que ser `passive: false` sin ambigüedad: un listener
+ * pasivo tiene prohibido `preventDefault`, el navegador lo ignoraría en
+ * silencio y ampliaría la página junto con la tabla. `@wheel` en la plantilla
+ * no deja declarar la opción —solo la contraria, `.passive`— y dependería del
+ * default del navegador para este tipo de elemento.
+ *
+ * Y solo encendida, porque un listener de rueda NO pasivo tiene costo aunque no
+ * haga nada: el navegador no puede componer el scroll de esa zona sin esperar a
+ * que el handler termine, por si cancela. Una tabla que no pidió el gesto no
+ * tiene por qué pagarlo en cada muesca de scroll.
+ *
+ * `flush: 'post'` porque el viewport es un template ref: existe recién después
+ * del render. El `onCleanup` corre al apagar la prop y al desmontar, cuando Vue
+ * detiene los watchers del componente.
+ */
+watch(
+  [viewportEl, () => props.wheelZoom],
+  ([viewport, enabled], _previous, onCleanup) => {
+    if (!viewport || !enabled) return
+    viewport.addEventListener('wheel', onViewportWheel, { passive: false })
+    onCleanup(() => viewport.removeEventListener('wheel', onViewportWheel))
+  },
+  { immediate: true, flush: 'post' },
+)
 
 /**
  * El resolutor de alturas, ya envuelto para el composable de geometría.
@@ -2174,6 +2394,20 @@ function moveActiveInReadingOrder(forward: boolean): void {
 }
 
 /**
+ * Mueve la selección después de confirmar una edición, hacia donde lo pidió la
+ * tecla —o el `commit` del slot—. Ver {@link CellEditorMove}.
+ *
+ * `'right'` y `'left'` son los de `Tab`, en orden de lectura; en modo fila no
+ * hay columnas que recorrer y no se mueven. `'down'` y `'up'` son los de `Enter`,
+ * que en modo fila sí tienen sentido: bajan o suben de fila.
+ */
+function moveAfterCommit(move: CellEditorMove): void {
+  if (move === 'down') moveActiveBy(1, 0)
+  else if (move === 'up') moveActiveBy(-1, 0)
+  else if (!rowMode.value) moveActiveInReadingOrder(move === 'right')
+}
+
+/**
  * Cabecera de grupo bajo la celda activa, o `null`.
  *
  * Es lo que decide si una tecla significa "plegar" o lo que significa siempre.
@@ -2256,6 +2490,16 @@ function onViewportKeyDown(event: KeyboardEvent): void {
     if (props.undoLimit <= 0) return
     event.preventDefault()
     redo()
+    return
+  }
+
+  // `Ctrl`+`D` rellena hacia abajo, como en una hoja de cálculo. En modo fila no
+  // hay celdas elegidas que rellenar, por lo mismo que `Supr` no vacía nada ahí,
+  // y la tecla queda para el navegador.
+  if (ctrl && !event.altKey && !shift && (event.key === 'd' || event.key === 'D')) {
+    if (rowMode.value) return
+    event.preventDefault()
+    fillDown()
     return
   }
 
@@ -2600,6 +2844,38 @@ function columnCanvasX(column: ResolvedColumn<TRow>): number {
 /* ------------------------------------------ Lotes: vaciar, pegar, deshacer */
 
 /**
+ * Las filas de un gesto de varias celdas, como van quedando con lo que el gesto
+ * ya les escribió.
+ *
+ * Es lo que ven `parse`, `validate` y las opciones por fila de cada celda: al
+ * pegar "área ⇥ puesto", el puesto se lee y se valida contra el área que se
+ * acaba de pegar a su izquierda y no contra la que la fila tenía. Sin esto, una
+ * columna que depende de otra rechazaría justo lo que el usuario pegó bien.
+ *
+ * La copia se arma como la armaría {@link applyEdits} —`row[columnKey]`— y solo
+ * con los cambios ACEPTADOS: una celda rechazada no llega a la fila, así que la
+ * de su derecha no la ve. Se crea una por gesto y se tira al terminar.
+ */
+interface GestureRows {
+  /** La fila de esa posición visible con lo escrito hasta ahora, o la original. */
+  rowAt(rowIndex: number): TRow | undefined
+  /** Anota un cambio aceptado sobre la fila de esa posición visible. */
+  record(rowIndex: number, change: EditCommitEvent<TRow>): void
+}
+
+function createGestureRows(): GestureRows {
+  const drafts = new Map<number, TRow>()
+  return {
+    rowAt: (rowIndex) => drafts.get(rowIndex) ?? grouping.rowAt(rowIndex),
+    record(rowIndex, change) {
+      const base = drafts.get(rowIndex) ?? grouping.rowAt(rowIndex)
+      if (base === undefined) return
+      drafts.set(rowIndex, Object.assign({}, base, { [change.columnKey]: change.newValue }))
+    },
+  }
+}
+
+/**
  * `Supr` / `Retroceso`: vacía la selección, sea una celda o un rango.
  *
  * Cada celda queda con lo que dejaría su editor al borrarlo todo y confirmar
@@ -2609,8 +2885,9 @@ function columnCanvasX(column: ResolvedColumn<TRow>): number {
  */
 function clearSelection(): void {
   const changes: EditCommitEvent<TRow>[] = []
+  const gesture = createGestureRows()
   for (const rect of selectionRects()) {
-    collectChanges(rect, 'clear', (type, current) => clearedValue(type, current), changes)
+    collectChanges(rect, 'clear', (type, current) => clearedValue(type, current), changes, gesture)
   }
   publishBatch('clear', changes)
 }
@@ -2637,6 +2914,7 @@ function collectChanges(
   source: EditSource,
   nextValue: (type: CellEditorType, current: CellValue, position: CellPosition) => ParsedCellValue,
   into: EditCommitEvent<TRow>[],
+  gesture: GestureRows,
 ): void {
   const columns = resolvedColumns.value
   for (let rowIndex = rect.rowStart; rowIndex <= rect.rowEnd; rowIndex += 1) {
@@ -2645,10 +2923,15 @@ function collectChanges(
       const column = columns[columnIndex]
       if (!column || column.key === SELECTION_COLUMN_KEY) continue
       const position: CellPosition = { rowIndex, columnKey: column.key }
-      const change = editor.prepareChange(position, source, (type, current) =>
-        nextValue(type, current, position),
+      const change = editor.prepareChange(
+        position,
+        source,
+        (type, current) => nextValue(type, current, position),
+        gesture.rowAt(rowIndex),
       )
-      if (change) into.push(withSourceRowIndex(change))
+      if (!change) continue
+      gesture.record(rowIndex, change)
+      into.push(withSourceRowIndex(change))
     }
   }
 }
@@ -2672,7 +2955,8 @@ function onViewportPaste(event: ClipboardEvent): void {
  * en el portapapeles, y lo que deja el copiado de esta misma tabla—.
  *
  * El bloque arranca en la esquina superior izquierda de la selección y ocupa lo
- * que mide, recortado por el borde de la tabla: no se agregan filas ni columnas.
+ * que mide, recortado por el borde de la tabla: no se agregan columnas, y filas
+ * tampoco salvo con la prop `appendRows` —ver el último párrafo—.
  * Si la selección es un múltiplo exacto del bloque —el caso típico es copiar UNA
  * celda y seleccionar muchas—, el bloque se repite hasta llenarla.
  *
@@ -2686,29 +2970,108 @@ function onViewportPaste(event: ClipboardEvent): void {
  * lectura del editor de la columna —número, fecha, casilla, opción por valor o
  * por etiqueta, lista—; después, por las reglas de toda edición: `editable`, el
  * veto de `beforeEdit` y `validate`. Al terminar, lo pegado queda seleccionado.
+ *
+ * Con la prop `appendRows`, un bloque que se pasa de la última fila no se
+ * recorta: se le piden al consumidor las filas que faltan y el pegado sigue
+ * cuando llegan. Ver {@link pasteAfterAppend}.
  */
 function pasteText(text: string): void {
+  if (pastePending) return
   const rect = selectionRects().at(-1)
   if (!rect) return
   const block = parseClipboardText(text)
+  if (block.length === 0 || blockWidth(block) === 0) return
+
+  const missing = rowsMissingFor(rect, block)
+  if (missing > 0) {
+    void pasteAfterAppend(rect, block, missing)
+    return
+  }
+  writePaste(rect, block)
+}
+
+/** Cuántas columnas tiene un bloque pegado: las de su línea más larga. */
+function blockWidth(block: readonly string[][]): number {
+  return Math.max(0, ...block.map((line) => line.length))
+}
+
+/**
+ * Si la selección repite el bloque como mosaico: es MÁS grande que el bloque y
+ * un múltiplo exacto de él en los dos ejes.
+ */
+function pasteTiles(rect: RangeRect, blockRows: number, blockColumns: number): boolean {
+  const selectedRows = rect.rowEnd - rect.rowStart + 1
+  const selectedColumns = rect.columnEnd - rect.columnStart + 1
+  return (
+    (selectedRows > blockRows || selectedColumns > blockColumns) &&
+    selectedRows % blockRows === 0 &&
+    selectedColumns % blockColumns === 0
+  )
+}
+
+/** `true` mientras un pegado espera las filas que pidió con `appendRows`. */
+let pastePending = false
+
+/**
+ * Cuántas filas le faltan a la tabla para que el bloque entre entero, si hay a
+ * quién pedírselas. Cero en cualquier otro caso.
+ *
+ * Solo se piden sin agrupación ni modo servidor: con grupos, una fila agregada al
+ * final de `rows` cae en el grupo que diga su valor y no debajo de lo pegado; en
+ * modo servidor el largo lo pone `rowCount`. Un mosaico tampoco pide nada: ya
+ * cabe en la selección, que está adentro de la tabla.
+ */
+function rowsMissingFor(rect: RangeRect, block: readonly string[][]): number {
+  if (!props.appendRows || grouping.active.value || serverMode.value) return 0
+  if (pasteTiles(rect, block.length, blockWidth(block))) return 0
+  return Math.max(0, rect.rowStart + block.length - visibleRowCount.value)
+}
+
+/**
+ * Pide las filas que faltan y, cuando llegaron, sigue con el MISMO pegado.
+ *
+ * Se espera a `appendRows` —si devuelve una promesa, a que se resuelva— y a un
+ * `nextTick`, que es cuando las filas nuevas ya entraron por la prop `rows`. Lo
+ * pegado sale en un solo lote, filas nuevas incluidas: el consumidor guarda el
+ * gesto de una vez, igual que cualquier otro pegado.
+ *
+ * Si `appendRows` falla, se pega igual lo que entra y el error sigue su camino
+ * hasta la consola: tragárselo escondería un problema del consumidor, y no pegar
+ * nada tiraría lo que el usuario ya eligió.
+ */
+async function pasteAfterAppend(
+  rect: RangeRect,
+  block: readonly string[][],
+  missing: number,
+): Promise<void> {
+  pastePending = true
+  try {
+    await props.appendRows?.(missing)
+    await nextTick()
+  } finally {
+    pastePending = false
+    // Si la tabla se desmontó mientras tanto, ya no hay dónde pegar.
+    if (viewportEl.value) writePaste(rect, block)
+  }
+}
+
+/** Escribe un bloque ya leído desde la esquina de un rectángulo. Ver {@link pasteText}. */
+function writePaste(rect: RangeRect, block: readonly string[][]): void {
   const blockRows = block.length
-  const blockColumns = Math.max(0, ...block.map((line) => line.length))
-  if (blockRows === 0 || blockColumns === 0) return
+  const blockColumns = blockWidth(block)
 
   const columns = resolvedColumns.value.filter(
     (column, index) => index >= rect.columnStart && column.key !== SELECTION_COLUMN_KEY,
   )
   const selectedRows = rect.rowEnd - rect.rowStart + 1
   const selectedColumns = rect.columnEnd - rect.columnStart + 1
-  const tiles =
-    (selectedRows > blockRows || selectedColumns > blockColumns) &&
-    selectedRows % blockRows === 0 &&
-    selectedColumns % blockColumns === 0
+  const tiles = pasteTiles(rect, blockRows, blockColumns)
   const targetRows = tiles ? selectedRows : blockRows
   const targetColumns = Math.min(columns.length, tiles ? selectedColumns : blockColumns)
   if (targetColumns === 0) return
 
   const changes: EditCommitEvent<TRow>[] = []
+  const gesture = createGestureRows()
   const rowCount = visibleRowCount.value
   let line = 0
   let rowIndex = rect.rowStart
@@ -2716,18 +3079,26 @@ function pasteText(text: string): void {
   for (; line < targetRows && rowIndex < rowCount; rowIndex += 1) {
     if (grouping.entryAt(rowIndex)?.kind === 'group') continue
     const cells = block[line % blockRows] ?? []
-    const row = grouping.rowAt(rowIndex)
-    if (row !== undefined) {
+    if (grouping.rowAt(rowIndex) !== undefined) {
+      const sourceIndex = grouping.toSourceIndex(rowIndex)
       for (let offset = 0; offset < targetColumns; offset += 1) {
         const column = columns[offset]
         const cellText = cells[offset % blockColumns]
         if (!column || cellText === undefined) continue
         const position: CellPosition = { rowIndex, columnKey: column.key }
-        const sourceIndex = grouping.toSourceIndex(rowIndex)
-        const change = editor.prepareChange(position, 'paste', (type, current) =>
-          parsePastedText(column.column, cellText, type, current, row, sourceIndex),
+        // La fila con lo que este pegado ya le escribió a la izquierda.
+        const row = gesture.rowAt(rowIndex)
+        if (row === undefined) continue
+        const change = editor.prepareChange(
+          position,
+          'paste',
+          (type, current) =>
+            parsePastedText(column.column, cellText, type, current, row, sourceIndex),
+          row,
         )
-        if (change) changes.push(withSourceRowIndex(change))
+        if (!change) continue
+        gesture.record(rowIndex, change)
+        changes.push(withSourceRowIndex(change))
       }
     }
     lastRow = rowIndex
@@ -2759,7 +3130,9 @@ function parsePastedText(
     const parsed = column.parse(text, row, rowIndex)
     return parsed === undefined ? REJECTED_VALUE : parsed
   }
-  return textToCellValue(text, type, current, column.options)
+  // Las opciones de ESTA fila: con opciones por fila, una etiqueta que la fila
+  // no ofrece se rechaza en lugar de caer en el valor de otra lista.
+  return textToCellValue(text, type, current, resolveColumnOptions(column, row, rowIndex))
 }
 
 /** Anuncia un lote, si cambió algo. */
@@ -3119,12 +3492,16 @@ const editor = useCellEditor<TRow>({
   validate: (position, row, column, value) =>
     validationMessage(column, value, row, grouping.toSourceIndex(position.rowIndex)),
   emitInvalid: (event) => emit('editInvalid', withSourceRowIndex(event)),
+  resolveOptions: (position, row, column) =>
+    resolveColumnOptions(column, row, grouping.toSourceIndex(position.rowIndex)),
   invalidMessage: () => labels.value.invalidValue,
-  onEnterCommit: () => {
-    // Enter confirma y baja una fila, como en una hoja de cálculo. La selección se
-    // mueve aunque el padre no persista el valor: es navegación, no edición.
-    moveActiveBy(1, 0)
-  },
+  // Confirmar con `Enter` baja, con `Tab` pasa a la derecha, y con `Shift` va al
+  // revés, como en una hoja de cálculo. La selección se mueve aunque el padre no
+  // persista el valor: es navegación, no edición.
+  onCommitMove: moveAfterCommit,
+  // En modo fila `Tab` no recorre celdas —ver el manejador del viewport—, así que
+  // con el editor abierto tampoco: sigue siendo la tecla que sale de la tabla.
+  tabNavigates: () => !rowMode.value,
   onReleaseFocus: () => {
     // El editor soltó el foco al cerrarse y sin esto quedaría en el `body`, o
     // sea fuera de la tabla: el manejador de teclado escucha en el viewport, así
@@ -3336,6 +3713,7 @@ function applyFill(source: RangeRect, target: RangeRect): void {
   )
 
   const changes: EditCommitEvent<TRow>[] = []
+  const gesture = createGestureRows()
   for (const row of rows) {
     for (const column of columns) {
       // El origen no se escribe: ya tiene lo que tiene.
@@ -3343,6 +3721,8 @@ function applyFill(source: RangeRect, target: RangeRect): void {
       const change = fillChange(
         { rowIndex: row.from, columnKey: column.from },
         { rowIndex: row.to, columnKey: column.to },
+        'fill',
+        gesture,
       )
       if (change) changes.push(change)
     }
@@ -3430,21 +3810,93 @@ function fillColumnsBetween(start: number, end: number): string[] {
  * con `Ctrl`+`C` y `Ctrl`+`V`: la columna de destino puede guardar otra cosa, y
  * su lectura —`column.parse` o su editor— es la que sabe convertirlo, por
  * ejemplo de la etiqueta de una opción a su valor.
+ *
+ * Lo comparten el tirador y `Ctrl`+`D`, que es el mismo relleno hacia abajo
+ * desde el teclado. Las reglas de la celda de destino ven la fila del gesto —ver
+ * {@link createGestureRows}—.
  */
-function fillChange(from: CellPosition, to: CellPosition): EditCommitEvent<TRow> | null {
+function fillChange(
+  from: CellPosition,
+  to: CellPosition,
+  source: 'fill' | 'fillDown',
+  gesture: GestureRows,
+): EditCommitEvent<TRow> | null {
   const fromRow = grouping.rowAt(from.rowIndex)
   const fromColumn = getColumnDefinition(from.columnKey)
-  const row = grouping.rowAt(to.rowIndex)
+  const row = gesture.rowAt(to.rowIndex)
   const column = getColumnDefinition(to.columnKey)
   // Una fila del modo servidor que no llegó no tiene nada que copiar, ni dónde.
   if (fromRow === undefined || !fromColumn || row === undefined || !column) return null
 
-  const change = editor.prepareChange(to, 'fill', (type, current) => {
-    if (from.columnKey === to.columnKey) return ownCopy(readCellValue(fromColumn, fromRow))
-    const text = cellText(fromColumn, fromRow, grouping.toSourceIndex(from.rowIndex))
-    return parsePastedText(column, text, type, current, row, grouping.toSourceIndex(to.rowIndex))
-  })
-  return change ? withSourceRowIndex(change) : null
+  const change = editor.prepareChange(
+    to,
+    source,
+    (type, current) => {
+      if (from.columnKey === to.columnKey) return ownCopy(readCellValue(fromColumn, fromRow))
+      const text = cellText(fromColumn, fromRow, grouping.toSourceIndex(from.rowIndex))
+      return parsePastedText(column, text, type, current, row, grouping.toSourceIndex(to.rowIndex))
+    },
+    row,
+  )
+  if (!change) return null
+  gesture.record(to.rowIndex, change)
+  return withSourceRowIndex(change)
+}
+
+/**
+ * `Ctrl`+`D`: rellena hacia abajo, como en una hoja de cálculo.
+ *
+ * En cada rango seleccionado —también los sumados con `Ctrl`+clic— la primera
+ * fila de datos se copia sobre las demás, columna por columna. Con una sola
+ * fila no hay "las demás": se copia la fila de datos de arriba, que es lo que
+ * hace Excel, siempre que sea de su mismo grupo —la primera fila de un grupo no
+ * tiene de dónde copiar—. Las cabeceras de grupo no cuentan como fila, ni de
+ * origen ni de destino.
+ *
+ * Es el relleno del tirador hacia abajo, y comparte su celda: viajan VALORES y no
+ * el texto que se ve —una fecha sigue siendo esa fecha, el valor de un editor de
+ * slot conserva su tipo—, y cada celda pasa por `editable`, el veto de
+ * `beforeEdit` y `validate`, con la fila del gesto. Lo que sobrevive llega en UN
+ * `cellsCommit` con `source: 'fillDown'`, y la selección no se mueve.
+ */
+function fillDown(): void {
+  const changes: EditCommitEvent<TRow>[] = []
+  const gesture = createGestureRows()
+  for (const rect of selectionRects()) {
+    const rows = dataRowsBetween(rect.rowStart, rect.rowEnd)
+    const single = rows.length === 1
+    const from = single ? previousDataRow(rect.rowStart) : rows[0]
+    if (from === undefined) continue
+    const targets = single ? rows : rows.slice(1)
+    const columns = fillColumnsBetween(rect.columnStart, rect.columnEnd)
+    for (const rowIndex of targets) {
+      for (const columnKey of columns) {
+        const change = fillChange(
+          { rowIndex: from, columnKey },
+          { rowIndex, columnKey },
+          'fillDown',
+          gesture,
+        )
+        if (change) changes.push(change)
+      }
+    }
+  }
+  publishBatch('fillDown', changes)
+}
+
+/**
+ * La fila de datos inmediatamente arriba de una posición visible, o `undefined`.
+ *
+ * Solo mira UNA posición, y se detiene en una cabecera de grupo en lugar de
+ * saltarla: la primera fila de un grupo no tiene "la de arriba". Buscar más allá
+ * copiaría la última fila del grupo anterior, que es de otro grupo —otra área,
+ * otro estado— y pegaría en silencio un dato que no corresponde. Sin origen,
+ * `Ctrl`+`D` no hace nada, igual que en la primera fila de la tabla.
+ */
+function previousDataRow(rowIndex: number): number | undefined {
+  const above = rowIndex - 1
+  if (above < 0 || grouping.entryAt(above)?.kind === 'group') return undefined
+  return above
 }
 
 /**
@@ -3520,18 +3972,21 @@ const editorSlotProps = computed<CellEditorSlotProps<TRow> | null>(() => {
 
   const row = grouping.rowAt(position.rowIndex)
   if (row === undefined) return null
+  // El índice que ve el consumidor es SIEMPRE el de su propio array, igual que
+  // en todos los eventos: la posición dentro de la vista aplanada no le sirve
+  // para escribir, y confundirlas le tocaría otra fila.
+  const rowIndex = grouping.toSourceIndex(position.rowIndex)
 
   return {
     row,
-    // El índice que ve el consumidor es SIEMPRE el de su propio array, igual que
-    // en todos los eventos: la posición dentro de la vista aplanada no le sirve
-    // para escribir, y confundirlas le tocaría otra fila.
-    rowIndex: grouping.toSourceIndex(position.rowIndex),
+    rowIndex,
     column,
     columnKey: position.columnKey,
     value: readCellValue(column, row),
+    options: resolveColumnOptions(column, row, rowIndex) ?? [],
     error: editor.error.value,
-    commit: (newValue: CellValue) => editor.commitSlotValue(newValue),
+    commit: (newValue: CellValue, options?: CellEditorCommitOptions) =>
+      editor.commitSlotValue(newValue, options?.move),
     cancel: () => editor.cancelEdit(),
   }
 })
@@ -3682,6 +4137,19 @@ function warnIfSelectionHasNoIdentity(): void {
 }
 
 /**
+ * `rowClass` ya reducida a texto, o `null` sin la prop.
+ *
+ * El pool compara textos para decidir si toca `classList`, así que la forma que
+ * acepta `:class` —texto, lista, objeto— se aplana aquí, una vez por fila
+ * pintada, y el pool no tiene que conocerla.
+ */
+const rowClassText = computed<((row: TRow, rowIndex: number) => string) | null>(() => {
+  const resolve = props.rowClass
+  if (!resolve) return null
+  return (row, rowIndex) => toClassText(resolve(row, rowIndex))
+})
+
+/**
  * Pinta un frame completo.
  *
  * Se invoca desde el `requestAnimationFrame` de `useScrollSync`, siempre después
@@ -3723,6 +4191,7 @@ function paintFrame(): void {
     selectionMode: props.selectionMode,
     stripe: props.stripe,
     resolveRowKey,
+    rowClass: rowClassText.value,
   })
   // Después del pool: `syncPosition` consulta si la celda editada sigue pintada,
   // y esa respuesta solo es válida una vez que el pool corrió.
@@ -3815,6 +4284,9 @@ watch(
     () => props.showGroupCount,
     // Encender o apagar la espera cambia lo que se pinta en TODAS las filas.
     () => props.loading,
+    // Una `rowClass` nueva es la forma de avisar que cambió el estado del que
+    // depende —un mapa de errores, un pendiente—: las filas se vuelven a pedir.
+    () => props.rowClass,
   ],
   () => scroll.requestFrame(),
   { flush: 'post' },
@@ -4273,6 +4745,7 @@ function widestTextOfDataset(
       row,
       rowIndex: index,
       column: definition,
+      options: resolveColumnOptions(definition, row, index),
       isEditing: false,
     }
   }

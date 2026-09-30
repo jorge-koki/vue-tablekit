@@ -7,6 +7,89 @@ Mientras la versión mayor sea `0`, un cambio incompatible sube la **minor**. La
 como pública es exactamente la que exporta [`src/index.ts`](./src/index.ts): lo que está bajo
 `internal/` y los composables pueden cambiar en cualquier versión sin aviso.
 
+## [Sin publicar]
+
+Todo lo agregado es opcional: una tabla que no usa las props nuevas se comporta igual. Lo que cambia
+sin pedirlo está en **Cambiado** y **Corregido**.
+
+### Agregado
+
+- **Confirmar y moverse con el editor abierto.** `Tab` confirma y pasa a la celda de la derecha —al
+  final de la fila, a la primera de la siguiente—, `Shift`+`Tab` a la de la izquierda, y
+  `Shift`+`Enter` confirma y sube, como `Enter` baja. Un valor que `validate` rechaza deja el editor
+  abierto y la selección quieta. Antes `Tab` era del navegador: confirmaba por el `blur` y sacaba el
+  foco de la tabla. En modo fila sigue siéndolo.
+- **`commit(valor, { move })` en el slot `#editor`.** El editor de slot pide el mismo movimiento
+  —`'right'`, `'left'`, `'down'`, `'up'`— al confirmar. Tipos `CellEditorMove` y
+  `CellEditorCommitOptions`. El slot recibe además `options`: las de la columna ya resueltas para
+  esa fila.
+- **Pegar más filas de las que hay: prop `appendRows(count)`.** Un bloque de `Ctrl`+`V` que se pasa
+  de la última fila le pide al consumidor las que faltan, espera a que lleguen por `rows` —y a la
+  promesa, si devuelve una— y el mismo pegado sigue sobre ellas, en un solo `cellsCommit`. Sin la
+  prop, el bloque se recorta como siempre. No pide filas con agrupación, en modo servidor ni con un
+  mosaico.
+- **Opciones por fila.** `column.options` acepta una función `(row, rowIndex) => CellOption[]`, para
+  columnas cuyas opciones dependen de otra. La etiqueta que se pinta y se copia, el desplegable del
+  editor, el slot y la lectura de un texto pegado usan las opciones de su fila. Tipo
+  `CellOptionsResolver`.
+- **Las reglas ven la fila del gesto.** En pegar, vaciar, el tirador y `Ctrl`+`D`, `parse`,
+  `validate` y las opciones por fila de cada celda reciben la fila con lo que el mismo gesto ya le
+  escribió a la izquierda: pegar "área ⇥ puesto" lee el puesto contra el área nueva. El `row` de
+  cada cambio anunciado sigue siendo el objeto de `rows`.
+- **`Ctrl`+`D`: rellenar hacia abajo.** Copia la primera fila de la selección sobre las demás —con
+  una sola fila, la de arriba, si es de su mismo grupo—, en cada rango. Copia valores y no el texto que se ve, pasa por
+  `editable`, `beforeEdit` y `validate`, llega en UN `cellsCommit` con el nuevo
+  `source: 'fillDown'` y se deshace de una vez.
+- **Prop `rowClass`.** Clases propias en cada fila de datos, como un `:class`: texto, lista u objeto
+  de banderas; en la lista, `false`, `null` y `undefined` se descartan. Para marcar el estado de una fila —pendiente, con error— sin tocar sus celdas. Tipo
+  `RowClassValue`.
+- **Zoom con `Ctrl`+rueda y con el pellizco del trackpad: prop `wheelZoom`.** Apagada por defecto:
+  la tabla pide el zoom por `update:zoom`, así que necesita `v-model:zoom`. Una muesca cambia un
+  10% y el pellizco es continuo; se emiten múltiplos de `0.05` dentro de `[0.5, 2]`. El gesto nunca
+  amplía la página, ni en los topes, y el contenido bajo el cursor queda en su lugar. Sin `Ctrl`, la
+  rueda sigue scrolleando.
+
+### Cambiado
+
+- Con el editor abierto, `Shift`+`Enter` confirma y SUBE una fila, como en una hoja de cálculo;
+  antes bajaba, igual que `Enter`. Y `Tab` confirma y se mueve en lugar de sacar el foco de la tabla.
+- `EditSource` y `BatchEditSource` suman `'fillDown'`. Un `switch` exhaustivo sobre `event.source`
+  —o un objeto indexado por él— necesita el caso nuevo. (`'fill'` ya estaba desde 0.5.0; lo que
+  faltaba era la documentación, que lo corrige esta versión).
+- `DataTableColumn.options` puede ser una función. Un consumidor que leía `column.options` como
+  array —por ejemplo desde el slot `#editor`— tiene que usar la prop `options` del slot. Un renderer
+  propio que hacía `ctx.column.options.find(...)` deja de compilar: tiene que leer `ctx.options`, el
+  campo nuevo de `CellRenderContext` con las opciones ya resueltas para esa fila (`undefined` si la
+  columna no declara).
+- `validate` y `parse` pueden recibir, en un gesto de varias celdas, una copia de la fila en lugar
+  del objeto de `rows`. Quien comparaba la fila por identidad dentro de esas funciones tiene que
+  compararla por su clave.
+- Pegar en una columna que muestra etiquetas de opciones —un `badge` sobre números o booleanos— lee
+  primero la etiqueta: `Cerrado` vuelve a `2` en lugar de rechazarse como número.
+
+### Corregido
+
+- **Copiar y pegar de vuelta devuelve el mismo número.** El renderer `number` muestra hasta tres
+  decimales y copiaba eso: `1234.56789` volvía como `1234.568`. Ahora se copian todos los decimales,
+  con los mismos separadores de miles que la celda, y se vuelven a leer igual también donde el
+  decimal es la coma: `12345` se copia `12.345` y vuelve como `12345`, no como `12,345`.
+- **`3,5` ya no se pega como `35`.** En una configuración regional con punto decimal, una coma sola
+  era siempre de miles. Ahora lo es solo si agrupa de a tres cifras (`1,500`, `1,234,567`); si no, es
+  el decimal. Con coma decimal pasa lo mismo con el punto: `12.345` es de miles y `3.5` sigue siendo
+  tres y medio.
+- **Fechas pegadas en el orden de la configuración regional.** `01/09/2026` se leía siempre a la
+  estadounidense —9 de enero— porque pasaba por `new Date`. Ahora `D/M/AAAA`, `D-M-AAAA` y
+  `D.M.AAAA` se leen con el día primero donde el día va primero.
+- **Una fecha numérica pegada en una celda `Date` queda a la medianoche UTC**, igual que la que
+  escribe el editor de fechas. Antes `D/M/AAAA` pasaba por `new Date` y quedaba a la medianoche
+  local: en cualquier zona fuera de UTC, un instante distinto del que deja el editor para el mismo día.
+- **Las fechas pegadas ya no se corren un día.** En una columna de texto, el día se guardaba con
+  `toISOString()`, en UTC: en una zona adelantada, o con una hora cerca de medianoche, caía en el
+  día de al lado. Ahora se guarda el día del calendario que se escribió.
+- **Una fecha imposible se rechaza.** `2026-02-31` se guardaba tal cual en una columna de texto y
+  pasaba al 3 de marzo en una de fechas; ahora queda afuera del lote con `editInvalid`, igual que
+  `30/02/2026`.
+
 ## [0.5.0] — 2026-09-24
 
 Sube la **minor** porque suma una funcionalidad y amplía un tipo público —ver **Cambiado**—.

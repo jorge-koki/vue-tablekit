@@ -44,12 +44,16 @@ import {
 import type {
   BatchEditSource,
   CellEdit,
+  CellEditorCommitOptions,
+  CellEditorMove,
+  CellOptionsResolver,
   CellRange,
   CellsCommitEvent,
   CellValueList,
   DataTableLabels,
   EditInvalidEvent,
   EditSource,
+  RowClassValue,
   RowSelectionChangeEvent,
   RowSelectionState,
   SelectionColumnOptions,
@@ -159,6 +163,19 @@ describe('lotes y validación', () => {
 
     expect(batch.source).toBe('paste')
     expect(invalid.message).toBe('no')
+  })
+
+  it('los tipos de la hoja de captura se importan desde el punto de entrada', () => {
+    const down: BatchEditSource = 'fillDown'
+    const move: CellEditorMove = 'right'
+    const commit: CellEditorCommitOptions = { move }
+    const options: CellOptionsResolver<Row> = (row) => [{ value: row.id, label: row.name }]
+    const rowClass: RowClassValue = { 'fila-pendiente': true }
+
+    expect(down).toBe('fillDown')
+    expect(commit.move).toBe('right')
+    expect(options({ id: 1, name: 'Ada' }, 0)).toEqual([{ value: 1, label: 'Ada' }])
+    expect(rowClass).toEqual({ 'fila-pendiente': true })
   })
 })
 

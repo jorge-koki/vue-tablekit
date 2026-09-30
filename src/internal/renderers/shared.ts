@@ -5,6 +5,7 @@ import type {
   CellRenderContext,
   CellRendererHandle,
 } from '../../types'
+import { resolveColumnOptions } from '../values'
 
 /**
  * Infraestructura común de los renderers de celda.
@@ -149,6 +150,22 @@ export function findOption(
     if (String(option.value) === text) return option
   }
   return null
+}
+
+/**
+ * Las opciones de la celda que se pinta: las de la columna, resueltas para ESA
+ * fila cuando dependen de ella. Es lo que tienen que consultar los renderers en
+ * lugar de `ctx.column.options`, que puede ser una función.
+ *
+ * Toma `ctx.options`, que la tabla ya resolvió al armar el contexto: así una
+ * función de opciones corre una vez por celda pintada y no una por cada consulta.
+ * Resolver de nuevo queda solo para un contexto armado a mano —quien compone
+ * sobre `badgeRenderer` y construye el suyo sin `options`—, que de otro modo
+ * perdería las etiquetas. Con opciones fijas o sin opciones, las dos vías dan lo
+ * mismo.
+ */
+export function optionsOf<TRow>(ctx: CellRenderContext<TRow>): readonly CellOption[] | undefined {
+  return ctx.options ?? resolveColumnOptions(ctx.column, ctx.row, ctx.rowIndex)
 }
 
 /** Paleta por defecto para badges y avatares, como tokens del tema. */

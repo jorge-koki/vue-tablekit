@@ -69,6 +69,45 @@ export const DEFAULT_ZOOM = 1
 export const MIN_ZOOM = 0.5
 export const MAX_ZOOM = 2
 
+/**
+ * El paso al que se redondea el zoom que pide `Ctrl`+rueda, como factor.
+ *
+ * La rueda calcula un zoom CONTINUO, pero lo que viaja por `update:zoom` es un
+ * múltiplo de este paso. Sin redondeo, el pellizco de un trackpad emitiría un
+ * valor distinto por evento —decenas por segundo—, cada uno con su re-render y
+ * su porcentaje raro en la UI del consumidor (un "113,7%" no le sirve a nadie).
+ * Un 5% es lo bastante fino para que el gesto se sienta continuo y lo bastante
+ * grueso para que la mayoría de los eventos no pidan nada.
+ */
+export const WHEEL_ZOOM_STEP = 0.05
+
+/**
+ * Lo que mide en px una muesca "típica" de la rueda de un mouse.
+ *
+ * Es el delta que mandan Chrome, Edge y Safari en modo píxel por cada muesca, y
+ * la unidad contra la que se calibra {@link WHEEL_ZOOM_NOTCH_FACTOR}.
+ */
+export const WHEEL_ZOOM_NOTCH = 100
+
+/**
+ * Cuánto multiplica el zoom una muesca de {@link WHEEL_ZOOM_NOTCH} px: un 10%.
+ *
+ * Es el ritmo del zoom de página de los navegadores, que es la referencia que el
+ * usuario trae en la mano: con otro número, `Ctrl`+rueda sobre la tabla se
+ * sentiría "más rápido" o "más lento" que el mismo gesto dos centímetros afuera.
+ */
+export const WHEEL_ZOOM_NOTCH_FACTOR = 1.1
+
+/**
+ * Alto nominal de una "línea" de rueda, en px.
+ *
+ * Firefox con mouse manda `deltaMode === 1` —el delta viene en líneas, no en
+ * píxeles—, y el navegador no expone cuánto mide su línea. Dieciséis es el
+ * valor que usan de hecho los motores y las librerías que normalizan ruedas, y
+ * deja tres líneas —la muesca de Firefox— en 48px: medio escalón de zoom.
+ */
+export const WHEEL_LINE_HEIGHT = 16
+
 /** Ancho en px aplicado a una columna que no declara el suyo. */
 export const DEFAULT_COLUMN_WIDTH = 150
 

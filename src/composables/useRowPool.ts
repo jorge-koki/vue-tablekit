@@ -43,6 +43,7 @@ import {
   setRowAriaIndex,
   setRowAriaLevel,
   setRowAriaSelected,
+  setRowCustomClass,
   setRowPlaceholder,
   setRowAriaSet,
   setRowExpanded,
@@ -67,7 +68,13 @@ import {
   ROW_POOL_SLACK,
   UNPAINTED_ROW_INDEX,
 } from '../internal/constants'
-import { formatCellValue, rawValuesEqual, readRawValue, toCellValue } from '../internal/values'
+import {
+  formatCellValue,
+  rawValuesEqual,
+  readRawValue,
+  resolveColumnOptions,
+  toCellValue,
+} from '../internal/values'
 import { resolveRenderer, revertCheckbox, TEXT_CELL_LAYOUT } from '../internal/renderers'
 import type { CellRenderer } from '../types'
 
@@ -371,6 +378,14 @@ export interface RowPoolPaintState<TRow> {
   stripe: boolean
   /** Resuelve la clave estable de una fila para el atributo `data-row-key`. */
   resolveRowKey: (row: TRow, rowIndex: number) => string
+  /**
+   * Clases propias de una fila de datos, ya reducidas a texto, o ausente.
+   *
+   * Recibe el índice dentro de `rows`, como todo lo que ve el consumidor. Solo se
+   * llama sobre filas de datos pintadas: una cabecera de grupo o un marcador no
+   * son filas del dataset y quedan sin clases propias.
+   */
+  rowClass?: ((row: TRow, rowIndex: number) => string) | null
 }
 
 /**
@@ -760,6 +775,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
     // "no existe", y la fila se retira. Es una lectura por pintado, no por fila.
     const placeholders = state.placeholders ?? false
     const loading = state.loading ?? false
+    const rowClass = state.rowClass ?? null
     const visibleRowCount = Math.max(0, rowRange.end - rowRange.start)
     const visibleColumnCount = columns.length
     // Índice ABSOLUTO de la primera columna del tramo, que es la base de la
@@ -903,6 +919,12 @@ export function useRowPool<TRow extends Record<string, unknown>>(
 
       ensureRowKind(rowNode, ROW_KIND_DATA)
       setRowPlaceholder(rowNode, false)
+      // Se pide en cada pintado y no se cachea por fila: una clase suele depender
+      // de estado que no vive en el objeto de fila —un error de guardado, un
+      // pendiente—, y un caché por identidad no se enteraría de ese cambio. Son
+      // unas treinta llamadas por frame, y el texto resultante sí se compara antes
+      // de tocar `classList`.
+      setRowCustomClass(rowNode, rowClass ? rowClass(row, sourceRowIndex) : '')
 
       const striped = stripe && rowIndex % 2 === 1
       const rowTop = rowMetrics.offsetOf(rowIndex)
@@ -1031,6 +1053,8 @@ export function useRowPool<TRow extends Record<string, unknown>>(
   ): void {
     ensureRowKind(rowNode, ROW_KIND_DATA)
     setRowPlaceholder(rowNode, true)
+    // Sin fila no hay de quién leer la clase, y la de la fila anterior sería falsa.
+    setRowCustomClass(rowNode, '')
 
     const rowTop = rowMetrics.offsetOf(rowIndex)
     setHidden(rowNode, false)
@@ -1172,6 +1196,7 @@ export function useRowPool<TRow extends Record<string, unknown>>(
   function retireRow(rowNode: PooledRowElement): void {
     rowNode.__dtRowIndex = UNPAINTED_ROW_INDEX
     rowNode.__dtSourceRowIndex = UNPAINTED_ROW_INDEX
+    setRowCustomClass(rowNode, '')
     setHidden(rowNode, true)
     hideRowNumber(rowNode)
   }
@@ -1333,6 +1358,8 @@ export function useRowPool<TRow extends Record<string, unknown>>(
   ): void {
     ensureRowKind(rowNode, ROW_KIND_GROUP)
     const parts = ensureGroupParts(rowNode)
+    // Una cabecera no es una fila del dataset: no lleva las clases de `rowClass`.
+    setRowCustomClass(rowNode, '')
 
     setHidden(rowNode, false)
     setHidden(parts.header, false)
@@ -1565,6 +1592,10 @@ export function useRowPool<TRow extends Record<string, unknown>>(
       row,
       rowIndex,
       column: resolved.column,
+      // Resueltas aquí, una vez por celda que llega a `update`: el camino rápido
+      // de arriba ya descartó las que no cambiaron, así que una función de
+      // opciones por fila no corre en un repintado que no toca la celda.
+      options: resolveColumnOptions(resolved.column, row, rowIndex),
       isEditing,
     })
 

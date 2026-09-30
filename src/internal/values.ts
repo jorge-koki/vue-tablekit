@@ -75,6 +75,28 @@ export function readRawValue<TRow extends Record<string, unknown>>(
 }
 
 /**
+ * Las opciones de una columna para una fila: la lista fija, o lo que devuelve la
+ * función de la fila.
+ *
+ * Es el ÚNICO punto por el que se leen las opciones, y por eso todas las vías
+ * —pintar, copiar, editar, pegar, la etiqueta de un grupo— coinciden. Sin fila
+ * no hay a quién preguntarle, y una columna con opciones por fila responde
+ * `undefined`: mejor ninguna lista que la de otra fila.
+ *
+ * @param rowIndex - Índice de `row` dentro de la prop `rows`.
+ */
+export function resolveColumnOptions<TRow>(
+  column: DataTableColumn<TRow>,
+  row: TRow | undefined,
+  rowIndex: number,
+): readonly CellOption[] | undefined {
+  const options = column.options
+  if (typeof options !== 'function') return options
+  if (row === undefined) return undefined
+  return options(row, rowIndex)
+}
+
+/**
  * Representación por defecto de un valor que no tiene hook `format`.
  *
  * `Date` se convierte a ISO y no a string de locale a propósito: construir un
@@ -287,14 +309,31 @@ export type ParsedCellValue = CellValue | typeof REJECTED_VALUE
  * portapapeles el copiado de una columna formateada. Con los dos separadores a
  * la vista, el ÚLTIMO es el decimal. Con uno solo repetido, son miles. Con una
  * sola coma y nada más, decide la configuración regional: en una donde la coma
- * es el decimal, `1,5` es uno y medio.
+ * es el decimal, `1,5` es uno y medio. En una con punto decimal, la coma sola es
+ * de miles SOLO si tiene la forma de una —grupos de tres cifras exactas: `1,500`,
+ * `1,234,567`—; si no, es el decimal que escribió alguien acostumbrado a la coma:
+ * `3,5` es tres y medio, no treinta y cinco. El punto solo es el espejo: donde la
+ * coma es el decimal, `12.345` es doce mil trescientos cuarenta y cinco —así lo
+ * copia la propia tabla—, y `3.5` sigue siendo tres y medio.
  *
  * Devuelve `null` si no hay un número que leer.
+ *
+ * @param decimal - El separador decimal de la configuración regional. Por
+ * defecto, el del navegador.
  */
-export function parseLocaleNumber(text: string): number | null {
+export function parseLocaleNumber(
+  text: string,
+  decimal: string = localeDecimalSeparator(),
+): number | null {
   let compact = text.trim().replace(/[\s  ]/g, '')
   compact = compact.replace(/^[^\d+\-.,]+/, '').replace(/[^\d.,]+$/, '')
   if (compact === '') return null
+
+  // Con coma decimal, un punto con forma de miles ES de miles, y hay que verlo
+  // antes del atajo de `Number`, que lo leería como decimal. No es un caso raro:
+  // es lo que escribe el propio copiado de una celda `number` en de-DE o es-ES
+  // —12345 se copia `12.345`—, y sin esto la ida y vuelta devolvería 12,345.
+  if (decimal === ',' && DOT_THOUSANDS.test(compact)) return Number(compact.split('.').join(''))
 
   const direct = Number(compact)
   if (!Number.isNaN(direct)) return direct
@@ -308,10 +347,8 @@ export function parseLocaleNumber(text: string): number | null {
     normalized = compact.split(group).join('').replace(decimal, '.')
   } else if (lastComma !== -1) {
     const single = compact.indexOf(',') === lastComma
-    normalized =
-      single && localeDecimalSeparator() === ','
-        ? compact.replace(',', '.')
-        : compact.split(',').join('')
+    const decimalComma = decimal === ',' ? single : single && !COMMA_THOUSANDS.test(compact)
+    normalized = decimalComma ? compact.replace(',', '.') : compact.split(',').join('')
   } else {
     normalized = compact.split('.').join('')
   }
@@ -319,6 +356,17 @@ export function parseLocaleNumber(text: string): number | null {
   const parsed = Number(normalized)
   return Number.isNaN(parsed) ? null : parsed
 }
+
+/** Un número con comas de miles bien puestas: `1,500`, `-12,345,678`. */
+const COMMA_THOUSANDS = /^[+-]?\d{1,3}(,\d{3})+$/
+
+/**
+ * Un número con puntos de miles bien puestos: `1.500`, `-12.345.678`.
+ *
+ * El primer grupo no empieza en cero porque ningún formateador escribe así un
+ * entero: `0.500` es medio, no quinientos, aunque tenga tres cifras detrás.
+ */
+const DOT_THOUSANDS = /^[+-]?[1-9]\d{0,2}(\.\d{3})+$/
 
 let decimalSeparator: string | null = null
 
@@ -343,17 +391,116 @@ export function parseBooleanText(text: string): boolean | null {
   return null
 }
 
+/** Orden de día y mes en una fecha escrita con números: `D/M/AAAA` o `M/D/AAAA`. */
+export type DateOrder = 'dmy' | 'mdy'
+
+/**
+ * En qué orden escribe día y mes una configuración regional: `'dmy'` si el día
+ * va antes que el mes —es-MX, es-ES, en-GB— y `'mdy'` si no —en-US—.
+ *
+ * @param locale - Sin él, la del navegador.
+ */
+export function dateOrderOf(locale?: string): DateOrder {
+  const parts = new Intl.DateTimeFormat(locale).formatToParts(new Date(2026, 0, 9))
+  const day = parts.findIndex((part) => part.type === 'day')
+  const month = parts.findIndex((part) => part.type === 'month')
+  return day !== -1 && month !== -1 && day < month ? 'dmy' : 'mdy'
+}
+
+let dateOrder: DateOrder | null = null
+
+/** El orden de día y mes del navegador, calculado una sola vez. */
+function localeDateOrder(): DateOrder {
+  dateOrder ??= dateOrderOf()
+  return dateOrder
+}
+
+/** `D/M/AAAA`, con `/`, `-` o `.` entre las partes y el año de cuatro cifras. */
+const NUMERIC_DATE = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/
+
+/** `AAAA-MM-DD`, el formato del `<input type="date">`. */
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/**
+ * Una hora con su zona horaria al final: `…00:00Z`, `…10:30 +02:00`, `…T08:00-0600`.
+ * Exige la hora delante para no confundir el año de `9-Jan-2026` con una zona.
+ */
+const EXPLICIT_ZONE = /\d:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:z|(?:gmt|utc)?[+-]\d{2}:?\d{2})$/i
+
 /**
  * Lee una fecha y la devuelve del MISMO tipo que tenía la celda: un string ISO
  * `YYYY-MM-DD` si era un string, un `Date` si no. `null` si no es una fecha.
+ *
+ * - `AAAA-MM-DD` se lee tal cual.
+ * - `D/M/AAAA` —también con `-` o `.`— se lee en el orden de la configuración
+ *   regional: `01/09/2026` es el 1 de septiembre en México y el 9 de enero en
+ *   Estados Unidos. `new Date` lo leería siempre a la estadounidense.
+ * - Lo demás —`9 Jan 2026`, una fecha con hora— lo lee `new Date`.
+ *
+ * Una fecha imposible —`31/02/2026`— devuelve `null` en lugar de pasar al mes
+ * siguiente. El día que se guarda en un string es el del CALENDARIO que se
+ * escribió: el local si el texto no dice zona, y el de la zona que diga si la
+ * dice. `toISOString()` lo pasaría a UTC y lo correría un día en cuanto la hora
+ * cruzara la medianoche. Un `Date` sale a la medianoche UTC de ese día, que es lo
+ * que escribe el editor de fechas —ver {@link fromDateInputString}—; con una hora
+ * escrita, se conserva la hora.
+ *
+ * @param order - Orden de día y mes. Por defecto, el del navegador.
  */
-export function parseDateText(text: string, previous: CellValue): CellValue | null {
+export function parseDateText(
+  text: string,
+  previous: CellValue,
+  order: DateOrder = localeDateOrder(),
+): CellValue | null {
   const trimmed = text.trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return fromDateInputString(trimmed, previous)
+
+  const iso = ISO_DATE.exec(trimmed)
+  if (iso) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]), previous)
+
+  const numeric = NUMERIC_DATE.exec(trimmed)
+  if (numeric) {
+    const first = Number(numeric[1])
+    const second = Number(numeric[2])
+    const year = Number(numeric[3])
+    return order === 'dmy'
+      ? calendarDate(year, second, first, previous)
+      : calendarDate(year, first, second, previous)
+  }
+
   const parsed = new Date(trimmed)
   if (Number.isNaN(parsed.getTime())) return null
-  if (typeof previous === 'string') return parsed.toISOString().slice(0, 10)
-  return parsed
+  if (typeof previous !== 'string') return parsed
+  return EXPLICIT_ZONE.test(trimmed)
+    ? isoDay(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, parsed.getUTCDate())
+    : isoDay(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate())
+}
+
+/**
+ * Un día del calendario, del tipo de la celda: `YYYY-MM-DD` o un `Date` a la
+ * medianoche UTC. `null` si el día no existe.
+ */
+function calendarDate(
+  year: number,
+  month: number,
+  day: number,
+  previous: CellValue,
+): CellValue | null {
+  const date = new Date(Date.UTC(year, month - 1, day))
+  // `Date.UTC` acepta el 31 de febrero y lo pasa al 3 de marzo: si el día que
+  // salió no es el que se escribió, no existía.
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null
+  }
+  return typeof previous === 'string' ? isoDay(year, month, day) : date
+}
+
+/** `YYYY-MM-DD` a partir de sus partes. */
+function isoDay(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
 /**
@@ -382,6 +529,12 @@ export function optionValueFor(
  * Un texto vacío vacía la celda, igual que `Supr`: pegar un bloque con huecos
  * deja huecos. Lo que no se puede leer —letras en un número, una opción que no
  * existe— devuelve {@link REJECTED_VALUE}.
+ *
+ * Con `options`, una etiqueta o un valor de opción se lee como esa opción ANTES
+ * que por el editor: una columna de números o de casillas que se muestra con sus
+ * etiquetas —un badge `Abierto` sobre el valor `1`, `Localizada` sobre `true`—
+ * se copia con la etiqueta, y pegarla de vuelta tiene que devolver el valor y no
+ * rechazar una palabra en una celda numérica.
  */
 export function textToCellValue(
   text: string,
@@ -390,6 +543,10 @@ export function textToCellValue(
   options?: readonly CellOption[],
 ): ParsedCellValue {
   if (text.trim() === '') return clearedValue(type, current)
+  if (type !== 'tags' && type !== 'select') {
+    const option = optionValueFor(text, options)
+    if (option !== null) return option
+  }
   switch (type) {
     case 'checkbox':
       return parseBooleanText(text) ?? REJECTED_VALUE

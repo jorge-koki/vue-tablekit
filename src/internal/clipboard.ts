@@ -1,6 +1,7 @@
 import type { DataTableColumn } from '../types'
-import { formatCellValue, readRawValue, toCellValue } from './values'
+import { formatCellValue, readRawValue, resolveColumnOptions, toCellValue } from './values'
 import { resolveRenderer } from './renderers'
+import { numberCopyText, numberRenderer } from './renderers/number'
 
 /**
  * Serialización de un rango de celdas al portapapeles.
@@ -81,7 +82,18 @@ export function cellText<TRow extends Record<string, unknown>>(
 ): string {
   const raw = readRawValue(column, row)
   const renderer = resolveRenderer<TRow>(column.renderer)
-  const ctx = { value: toCellValue(raw), raw, row, rowIndex, column, isEditing: false }
+  const ctx = {
+    value: toCellValue(raw),
+    raw,
+    row,
+    rowIndex,
+    column,
+    options: resolveColumnOptions(column, row, rowIndex),
+    isEditing: false,
+  }
+  // El renderer numérico muestra tres decimales: se copia el dato entero, para
+  // que pegarlo de vuelta devuelva el mismo número. Ver `numberCopyText`.
+  if (renderer === numberRenderer) return numberCopyText(ctx)
   return renderer.text ? renderer.text(ctx) : formatCellValue(ctx.value)
 }
 

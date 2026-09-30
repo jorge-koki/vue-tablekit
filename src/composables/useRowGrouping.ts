@@ -311,7 +311,7 @@ export function useRowGrouping<TRow extends Record<string, unknown>>(
             id,
             columnKey,
             value,
-            label: groupValueLabel(column, value, emptyLabel),
+            label: groupValueLabel(column, value, emptyLabel, row, rowIndex),
             depth: level,
             count: 0,
             children: isLeaf ? null : [],

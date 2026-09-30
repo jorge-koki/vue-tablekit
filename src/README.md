@@ -138,40 +138,43 @@ vez.
 
 **Medidas y aspecto**
 
-| Prop                 | Tipo                                     | Por defecto             | Descripción                                                                                                                           |
-| -------------------- | ---------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `rowHeight`          | `number \| RowHeightResolver<TRow>`      | `40` (`30` con `dense`) | Alto de fila en px, fijo o por fila. Ver [Alturas de fila distintas](#alturas-de-fila-distintas).                                     |
-| `headerHeight`       | `number`                                 | `44` (`34` con `dense`) | Alto de la fila de títulos en px.                                                                                                     |
-| `headerGroupHeight`  | `number`                                 | `headerHeight`          | Alto de la fila de [encabezados agrupados](#encabezados-agrupados). Solo cuenta si una columna visible declara `headerGroup`.         |
-| `dense`              | `boolean`                                | `false`                 | Preset compacto: filas, encabezado, tipografía, padding y sangría de grupo más chicos.                                                |
-| `zoom`               | `number`                                 | `1`                     | `v-model:zoom`. Factor de ampliación, acotado a `[0.5, 2]`. Ver [Zoom](#zoom).                                                        |
-| `fullscreen`         | `boolean`                                | `false`                 | `v-model:fullscreen`. Pantalla completa nativa. Ver [Pantalla completa](#pantalla-completa).                                          |
-| `theme`              | `'light' \| 'dark' \| 'auto'`            | `'auto'`                | Esquema de color. Ver [Claro y oscuro](#claro-y-oscuro).                                                                              |
-| `variant`            | `'default' \| 'cells' \| 'rows'`         | `'default'`             | `'cells'`: grilla completa. `'rows'`: solo líneas entre filas. Los dos ignoran `stripe` y `bordered`.                                 |
-| `radiusBorder`       | `'none' \| 'sm' \| 'md' \| 'lg' \| 'xl'` | `'none'`                | Redondeo de la caja exterior. `'md'` usa el radio del tema (`--dt-radius`).                                                           |
-| `stripe`             | `boolean`                                | `false`                 | Pone `.dt-row--stripe` en las filas impares. La librería no las pinta: tú decides el color.                                           |
-| `bordered`           | `boolean`                                | `false`                 | Separadores verticales entre celdas.                                                                                                  |
-| `showRowNumbers`     | `boolean`                                | `true`                  | Regleta con el número de fila, fija a la izquierda. No es una columna: no se selecciona, no se copia ni se reordena.                  |
-| `crosshair`          | `boolean`                                | `false`                 | Línea bajo el encabezado de la columna activa y junto al número de su fila.                                                           |
-| `focusRing`          | `boolean`                                | `false`                 | Anillo alrededor del viewport cuando tiene el foco por teclado y no hay celda activa. Enciéndelo si tus usuarios navegan con teclado. |
-| `overscan`           | `number`                                 | `4`                     | Filas y columnas extra pintadas fuera de la vista.                                                                                    |
-| `defaultColumnWidth` | `number`                                 | `150`                   | Ancho de las columnas que no declaran `width`.                                                                                        |
-| `virtualizeColumns`  | `boolean`                                | `true`                  | Pinta solo las columnas visibles en horizontal. Apágalo si todas caben en pantalla.                                                   |
-| `labels`             | `DataTableLabels`                        | en inglés               | Textos de los controles de la librería. Ver [Textos](#textos-labels).                                                                 |
+| Prop                 | Tipo                                             | Por defecto             | Descripción                                                                                                                            |
+| -------------------- | ------------------------------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `rowHeight`          | `number \| RowHeightResolver<TRow>`              | `40` (`30` con `dense`) | Alto de fila en px, fijo o por fila. Ver [Alturas de fila distintas](#alturas-de-fila-distintas).                                      |
+| `headerHeight`       | `number`                                         | `44` (`34` con `dense`) | Alto de la fila de títulos en px.                                                                                                      |
+| `headerGroupHeight`  | `number`                                         | `headerHeight`          | Alto de la fila de [encabezados agrupados](#encabezados-agrupados). Solo cuenta si una columna visible declara `headerGroup`.          |
+| `dense`              | `boolean`                                        | `false`                 | Preset compacto: filas, encabezado, tipografía, padding y sangría de grupo más chicos.                                                 |
+| `zoom`               | `number`                                         | `1`                     | `v-model:zoom`. Factor de ampliación, acotado a `[0.5, 2]`. Ver [Zoom](#zoom).                                                         |
+| `wheelZoom`          | `boolean`                                        | `false`                 | `Ctrl`+rueda y pellizco del trackpad cambian `zoom`; requiere `v-model:zoom`. Ver [Zoom](#zoom).                                       |
+| `fullscreen`         | `boolean`                                        | `false`                 | `v-model:fullscreen`. Pantalla completa nativa. Ver [Pantalla completa](#pantalla-completa).                                           |
+| `theme`              | `'light' \| 'dark' \| 'auto'`                    | `'auto'`                | Esquema de color. Ver [Claro y oscuro](#claro-y-oscuro).                                                                               |
+| `variant`            | `'default' \| 'cells' \| 'rows'`                 | `'default'`             | `'cells'`: grilla completa. `'rows'`: solo líneas entre filas. Los dos ignoran `stripe` y `bordered`.                                  |
+| `radiusBorder`       | `'none' \| 'sm' \| 'md' \| 'lg' \| 'xl'`         | `'none'`                | Redondeo de la caja exterior. `'md'` usa el radio del tema (`--dt-radius`).                                                            |
+| `stripe`             | `boolean`                                        | `false`                 | Pone `.dt-row--stripe` en las filas impares. La librería no las pinta: tú decides el color.                                            |
+| `bordered`           | `boolean`                                        | `false`                 | Separadores verticales entre celdas.                                                                                                   |
+| `rowClass`           | `(row: TRow, rowIndex: number) => RowClassValue` | —                       | Clases propias en cada fila de datos, como un `:class`: texto, lista u objeto. Ver [Estado de una fila](#estado-de-una-fila-rowclass). |
+| `showRowNumbers`     | `boolean`                                        | `true`                  | Regleta con el número de fila, fija a la izquierda. No es una columna: no se selecciona, no se copia ni se reordena.                   |
+| `crosshair`          | `boolean`                                        | `false`                 | Línea bajo el encabezado de la columna activa y junto al número de su fila.                                                            |
+| `focusRing`          | `boolean`                                        | `false`                 | Anillo alrededor del viewport cuando tiene el foco por teclado y no hay celda activa. Enciéndelo si tus usuarios navegan con teclado.  |
+| `overscan`           | `number`                                         | `4`                     | Filas y columnas extra pintadas fuera de la vista.                                                                                     |
+| `defaultColumnWidth` | `number`                                         | `150`                   | Ancho de las columnas que no declaran `width`.                                                                                         |
+| `virtualizeColumns`  | `boolean`                                        | `true`                  | Pinta solo las columnas visibles en horizontal. Apágalo si todas caben en pantalla.                                                    |
+| `labels`             | `DataTableLabels`                                | en inglés               | Textos de los controles de la librería. Ver [Textos](#textos-labels).                                                                  |
 
 **Selección y edición**
 
-| Prop              | Tipo                                      | Por defecto   | Descripción                                                                                                                                   |
-| ----------------- | ----------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `selectionMode`   | `'none' \| 'cell' \| 'row'`               | `'cell'`      | Qué selecciona el clic y el teclado. Ver [Modos de selección](#modos-de-selección).                                                           |
-| `rangeSelection`  | `boolean`                                 | `true`        | Rangos de celdas: arrastrar, `Shift`+clic, `Shift`+flechas, `Ctrl`+clic, `Ctrl`+`A`. Solo rige con `selectionMode: 'cell'`.                   |
-| `fillHandle`      | `'none' \| 'axis' \| 'area'`              | `'none'`      | Tirador de relleno en la esquina de la selección: apagado, en un eje o en área. Ver [Rellenar con el tirador](#rellenar-con-el-tirador).      |
-| `activeCell`      | `CellPosition \| null`                    | no controlado | `v-model:active-cell`. La celda activa; `null` es "controlado y sin selección".                                                               |
-| `columnSelection` | `boolean`                                 | `false`       | Clic en un encabezado selecciona la columna entera como rango. Ver [Seleccionar una columna o una fila](#seleccionar-una-columna-o-una-fila). |
-| `rowSelection`    | `boolean`                                 | `false`       | Clic en el número de una fila la selecciona entera como rango. No es `selectionMode: 'row'`.                                                  |
-| `selectionColumn` | `boolean \| SelectionColumnOptions<TRow>` | `false`       | Columna de casillas al inicio para marcar filas. Ver [Marcar filas con casillas](#marcar-filas-con-casillas).                                 |
-| `selectedRows`    | `RowSelectionState`                       | no controlado | `v-model:selected-rows`. Las filas marcadas, por clave.                                                                                       |
-| `undoLimit`       | `number`                                  | `100`         | Cuántos gestos recuerda `Ctrl`+`Z`. `0` apaga el historial.                                                                                   |
+| Prop              | Tipo                                       | Por defecto   | Descripción                                                                                                                                         |
+| ----------------- | ------------------------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `selectionMode`   | `'none' \| 'cell' \| 'row'`                | `'cell'`      | Qué selecciona el clic y el teclado. Ver [Modos de selección](#modos-de-selección).                                                                 |
+| `rangeSelection`  | `boolean`                                  | `true`        | Rangos de celdas: arrastrar, `Shift`+clic, `Shift`+flechas, `Ctrl`+clic, `Ctrl`+`A`. Solo rige con `selectionMode: 'cell'`.                         |
+| `fillHandle`      | `'none' \| 'axis' \| 'area'`               | `'none'`      | Tirador de relleno en la esquina de la selección: apagado, en un eje o en área. Ver [Rellenar con el tirador](#rellenar-con-el-tirador).            |
+| `appendRows`      | `(count: number) => void \| Promise<void>` | —             | Agrega filas cuando un pegado no entra, y el mismo pegado sigue sobre ellas. Ver [Pegar más filas de las que hay](#pegar-más-filas-de-las-que-hay). |
+| `activeCell`      | `CellPosition \| null`                     | no controlado | `v-model:active-cell`. La celda activa; `null` es "controlado y sin selección".                                                                     |
+| `columnSelection` | `boolean`                                  | `false`       | Clic en un encabezado selecciona la columna entera como rango. Ver [Seleccionar una columna o una fila](#seleccionar-una-columna-o-una-fila).       |
+| `rowSelection`    | `boolean`                                  | `false`       | Clic en el número de una fila la selecciona entera como rango. No es `selectionMode: 'row'`.                                                        |
+| `selectionColumn` | `boolean \| SelectionColumnOptions<TRow>`  | `false`       | Columna de casillas al inicio para marcar filas. Ver [Marcar filas con casillas](#marcar-filas-con-casillas).                                       |
+| `selectedRows`    | `RowSelectionState`                        | no controlado | `v-model:selected-rows`. Las filas marcadas, por clave.                                                                                             |
+| `undoLimit`       | `number`                                   | `100`         | Cuántos gestos recuerda `Ctrl`+`Z`. `0` apaga el historial.                                                                                         |
 
 **Columnas y layout**
 
@@ -237,33 +240,33 @@ Se pasa parcial; lo que no declares queda en inglés.
 
 ## Eventos
 
-| Evento                    | Payload                             | Cuándo sale                                                                                                                                                                        |
-| ------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `beforeEdit`              | `BeforeEditEvent<TRow>`             | Antes de escribir una celda, por cualquier vía. `source`: `'editor'`, `'clear'`, `'paste'`, `'fill'`, `'undo'` o `'redo'`. **Cancelable** con `event.cancel()`, de forma síncrona. |
-| `afterEdit`               | `AfterEditEvent<TRow>`              | Al cerrarse un editor, haya confirmado o no (`canceled`). Una vez por editor abierto, antes de `editCommit`.                                                                       |
-| `editCommit`              | `EditCommitEvent<TRow>`             | Un editor confirmó un valor distinto del anterior. Es el que te pide escribir en `rows`.                                                                                           |
-| `cellsCommit`             | `CellsCommitEvent<TRow>`            | Un gesto escribió varias celdas: vaciar, pegar, rellenar, deshacer o rehacer. Uno por gesto, con todos los cambios.                                                                |
-| `editInvalid`             | `EditInvalidEvent<TRow>`            | `column.validate` rechazó un valor, o un texto pegado no se pudo leer. Es un aviso, no un veto.                                                                                    |
-| `columnResize`            | `ColumnResizeEvent`                 | Terminó un cambio de ancho (arrastre, modo ancho o doble clic de ajuste) con un ancho distinto. Una vez por gesto, en px base. `Escape` en modo ancho no lo emite.                 |
-| `sortChange`              | `SortChangeEvent`                   | El usuario cambió el orden desde un encabezado o el menú. No sale al restaurar lo persistido.                                                                                      |
-| `rowClick`                | `{ row: TRow; rowIndex: number }`   | Clic en una fila de datos, en cualquier modo de selección. No sale en cabeceras de grupo.                                                                                          |
-| `cellSelect`              | `CellSelectEvent<TRow>`             | La celda activa pasó a una fila de datos y una columna visible. Trae fila, columna y valor. No sale sobre una cabecera de grupo.                                                   |
-| `rangeSelect`             | `RangeSelectEvent<TRow>`            | Cambió el rango, en cada paso del arrastre. `range: null` = una sola celda; `ranges` = todos los rangos, el vigente al final.                                                      |
-| `rangeCopy`               | `RangeCopyEvent`                    | Después de escribir la selección en el portapapeles, con el texto exacto.                                                                                                          |
-| `rowSelectionChange`      | `RowSelectionChangeEvent<TRow>`     | Cambió el conjunto de filas marcadas; `reason` dice el gesto. Después de `update:selectedRows`.                                                                                    |
-| `groupToggle`             | `GroupToggleEvent`                  | Se plegó o se desplegó un grupo puntual, con clic o teclado. `expandAllGroups()` y `collapseAllGroups()` no lo emiten.                                                             |
-| `rowsRequest`             | `RowsRequestEvent`                  | Modo servidor: la tabla necesita el tramo `{ start, end, page }`. Una vez por página.                                                                                              |
-| `update:activeCell`       | `CellPosition \| null`              | Cambió la celda activa, también a `null`. Antes de `cellSelect`.                                                                                                                   |
-| `update:columnVisibility` | `Readonly<Record<string, boolean>>` | Cambió la visibilidad: UI, persistencia o `resetLayout()`.                                                                                                                         |
-| `update:columnOrder`      | `string[]`                          | Cambió el orden de las columnas.                                                                                                                                                   |
-| `update:columnWidths`     | `Readonly<Record<string, number>>`  | Cambiaron los anchos; también durante el arrastre y con cada tecla del modo ancho.                                                                                                 |
-| `update:columnPinning`    | `ColumnPinState`                    | Cambió el anclaje.                                                                                                                                                                 |
-| `update:selectedRows`     | `RowSelectionState`                 | Cambiaron las filas marcadas.                                                                                                                                                      |
-| `update:sort`             | `ColumnSort[]`                      | Cambió el orden; **también** al restaurar lo persistido.                                                                                                                           |
-| `update:groupBy`          | `string[]`                          | Cambió la agrupación.                                                                                                                                                              |
-| `update:expandedGroups`   | `string[]`                          | Cambió la expansión. Lleva la lista completa de expandidos. Antes de `groupToggle`.                                                                                                |
-| `update:zoom`             | `number`                            | La tabla corrigió un `zoom` fuera de rango; lleva el valor efectivo. Un valor válido no lo emite.                                                                                  |
-| `update:fullscreen`       | `boolean`                           | Entró o salió de pantalla completa por cualquier motivo: la prop, los métodos, `Esc`/`F11` o un rechazo del navegador.                                                             |
+| Evento                    | Payload                             | Cuándo sale                                                                                                                                                                                      |
+| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `beforeEdit`              | `BeforeEditEvent<TRow>`             | Antes de escribir una celda, por cualquier vía. `source`: `'editor'`, `'clear'`, `'paste'`, `'fill'`, `'fillDown'`, `'undo'` o `'redo'`. **Cancelable** con `event.cancel()`, de forma síncrona. |
+| `afterEdit`               | `AfterEditEvent<TRow>`              | Al cerrarse un editor, haya confirmado o no (`canceled`). Una vez por editor abierto, antes de `editCommit`.                                                                                     |
+| `editCommit`              | `EditCommitEvent<TRow>`             | Un editor confirmó un valor distinto del anterior. Es el que te pide escribir en `rows`.                                                                                                         |
+| `cellsCommit`             | `CellsCommitEvent<TRow>`            | Un gesto escribió varias celdas: vaciar, pegar, rellenar —con el tirador o con `Ctrl`+`D`—, deshacer o rehacer. Uno por gesto, con todos los cambios.                                            |
+| `editInvalid`             | `EditInvalidEvent<TRow>`            | `column.validate` rechazó un valor, o un texto pegado no se pudo leer. Es un aviso, no un veto.                                                                                                  |
+| `columnResize`            | `ColumnResizeEvent`                 | Terminó un cambio de ancho (arrastre, modo ancho o doble clic de ajuste) con un ancho distinto. Una vez por gesto, en px base. `Escape` en modo ancho no lo emite.                               |
+| `sortChange`              | `SortChangeEvent`                   | El usuario cambió el orden desde un encabezado o el menú. No sale al restaurar lo persistido.                                                                                                    |
+| `rowClick`                | `{ row: TRow; rowIndex: number }`   | Clic en una fila de datos, en cualquier modo de selección. No sale en cabeceras de grupo.                                                                                                        |
+| `cellSelect`              | `CellSelectEvent<TRow>`             | La celda activa pasó a una fila de datos y una columna visible. Trae fila, columna y valor. No sale sobre una cabecera de grupo.                                                                 |
+| `rangeSelect`             | `RangeSelectEvent<TRow>`            | Cambió el rango, en cada paso del arrastre. `range: null` = una sola celda; `ranges` = todos los rangos, el vigente al final.                                                                    |
+| `rangeCopy`               | `RangeCopyEvent`                    | Después de escribir la selección en el portapapeles, con el texto exacto.                                                                                                                        |
+| `rowSelectionChange`      | `RowSelectionChangeEvent<TRow>`     | Cambió el conjunto de filas marcadas; `reason` dice el gesto. Después de `update:selectedRows`.                                                                                                  |
+| `groupToggle`             | `GroupToggleEvent`                  | Se plegó o se desplegó un grupo puntual, con clic o teclado. `expandAllGroups()` y `collapseAllGroups()` no lo emiten.                                                                           |
+| `rowsRequest`             | `RowsRequestEvent`                  | Modo servidor: la tabla necesita el tramo `{ start, end, page }`. Una vez por página.                                                                                                            |
+| `update:activeCell`       | `CellPosition \| null`              | Cambió la celda activa, también a `null`. Antes de `cellSelect`.                                                                                                                                 |
+| `update:columnVisibility` | `Readonly<Record<string, boolean>>` | Cambió la visibilidad: UI, persistencia o `resetLayout()`.                                                                                                                                       |
+| `update:columnOrder`      | `string[]`                          | Cambió el orden de las columnas.                                                                                                                                                                 |
+| `update:columnWidths`     | `Readonly<Record<string, number>>`  | Cambiaron los anchos; también durante el arrastre y con cada tecla del modo ancho.                                                                                                               |
+| `update:columnPinning`    | `ColumnPinState`                    | Cambió el anclaje.                                                                                                                                                                               |
+| `update:selectedRows`     | `RowSelectionState`                 | Cambiaron las filas marcadas.                                                                                                                                                                    |
+| `update:sort`             | `ColumnSort[]`                      | Cambió el orden; **también** al restaurar lo persistido.                                                                                                                                         |
+| `update:groupBy`          | `string[]`                          | Cambió la agrupación.                                                                                                                                                                            |
+| `update:expandedGroups`   | `string[]`                          | Cambió la expansión. Lleva la lista completa de expandidos. Antes de `groupToggle`.                                                                                                              |
+| `update:zoom`             | `number`                            | La tabla corrigió un `zoom` fuera de rango (lleva el efectivo), o `wheelZoom` pide uno nuevo. Un valor válido no se corrige.                                                                     |
+| `update:fullscreen`       | `boolean`                           | Entró o salió de pantalla completa por cualquier motivo: la prop, los métodos, `Esc`/`F11` o un rechazo del navegador.                                                                           |
 
 Ni `update:activeCell` ni `cellSelect` salen si se vuelve a elegir la celda que ya estaba activa. Las
 formas de los payloads están en [Tipos de eventos y estado](#tipos-de-eventos-y-estado).
@@ -318,16 +321,17 @@ cotización) sin que cambie el valor de la celda.
 
 Props de `#editor`:
 
-| Prop               | Tipo                     | Qué es                                                                                     |
-| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------ |
-| `row`              | `TRow`                   | La fila que se edita. No la mutes.                                                         |
-| `rowIndex`         | `number`                 | Índice dentro de `rows`, como en los eventos.                                              |
-| `column`           | `DataTableColumn<TRow>`  | La definición completa, con sus `options`. Despacha por `column.key`.                      |
-| `columnKey`        | `string`                 | Alias de `column.key`.                                                                     |
-| `value`            | `CellValue`              | El valor con el que se abrió, leído por el `accessor`.                                     |
-| `error`            | `string \| null`         | Mensaje del último `commit` rechazado por `column.validate`; el editor sigue abierto.      |
-| `commit(newValue)` | `(v: CellValue) => void` | Cierra confirmando: `afterEdit` y, si el valor cambió, `editCommit`. Sin coerción de tipo. |
-| `cancel()`         | `() => void`             | Cierra descartando: `afterEdit` con `canceled: true`.                                      |
+| Prop                          | Tipo                                                  | Qué es                                                                                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `row`                         | `TRow`                                                | La fila que se edita. No la mutes.                                                                                                                                                                                     |
+| `rowIndex`                    | `number`                                              | Índice dentro de `rows`, como en los eventos.                                                                                                                                                                          |
+| `column`                      | `DataTableColumn<TRow>`                               | La definición completa. Despacha por `column.key`.                                                                                                                                                                     |
+| `columnKey`                   | `string`                                              | Alias de `column.key`.                                                                                                                                                                                                 |
+| `value`                       | `CellValue`                                           | El valor con el que se abrió, leído por el `accessor`.                                                                                                                                                                 |
+| `options`                     | `readonly CellOption[]`                               | Las opciones de la columna para ESTA fila, ya resueltas —también si son una función—.                                                                                                                                  |
+| `error`                       | `string \| null`                                      | Mensaje del último `commit` rechazado por `column.validate`; el editor sigue abierto.                                                                                                                                  |
+| `commit(newValue, { move }?)` | `(v: CellValue, o?: CellEditorCommitOptions) => void` | Cierra confirmando: `afterEdit` y, si el valor cambió, `editCommit`. Sin coerción de tipo. Con `move` (`'right'`, `'left'`, `'down'`, `'up'`) mueve la selección como `Tab`, `Shift`+`Tab`, `Enter` y `Shift`+`Enter`. |
+| `cancel()`                    | `() => void`                                          | Cierra descartando: `afterEdit` con `canceled: true`.                                                                                                                                                                  |
 
 Uso y reglas en [Editor propio con el slot `#editor`](#editor-propio-con-el-slot-editor). El
 `#toolbar` está en [La barra `#toolbar`](#la-barra-toolbar).
@@ -339,36 +343,36 @@ Uso y reglas en [Editor propio con el slot `#editor`](#editor-propio-con-el-slot
 Una columna es configuración: se lee en cada pintado. Define el array a nivel de módulo o en un
 `computed` que dependa solo de lo que de verdad lo cambia.
 
-| Campo                 | Tipo                                                                                        | Por defecto                            | Qué hace                                                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key`                 | `string`                                                                                    | —                                      | Id único de la columna y clave de datos por defecto (`row[key]`).                                                                                    |
-| `label`               | `string`                                                                                    | `key`                                  | Título del encabezado.                                                                                                                               |
-| `width`               | `number`                                                                                    | `defaultColumnWidth`                   | Ancho en px. Se acota a `[max(32, minWidth), min(4000, maxWidth)]`.                                                                                  |
-| `minWidth`/`maxWidth` | `number`                                                                                    | `32` / `4000`                          | Límites del ancho, también al redimensionar y al ajustar.                                                                                            |
-| `resizable`           | `boolean`                                                                                   | `false`                                | Tirador de ancho en el encabezado, [modo ancho](#cambiar-el-ancho-con-el-teclado) con el teclado y [doble clic de ajuste](#ajustar-al-contenido).    |
-| `sortable`            | `boolean \| 'menu'`                                                                         | `false`                                | `true`: el clic en el encabezado ordena. `'menu'`: solo desde el menú.                                                                               |
-| `comparator`          | `(a: TRow, b: TRow) => number`                                                              | —                                      | Comparador ascendente propio. Solo lo usa `sortRows`.                                                                                                |
-| `pinned`              | `'start' \| 'end'`                                                                          | —                                      | Anclaje inicial a un borde.                                                                                                                          |
-| `pinnable`            | `boolean \| 'start' \| 'end' \| 'menu'`                                                     | `false`                                | Botón de anclar en el encabezado y a qué borde lleva (`true` = `'start'`). `'menu'`: sin botón, solo desde el menú.                                  |
-| `menu`                | `boolean`                                                                                   | `true`                                 | `false` quita el menú de tres puntos de esta columna.                                                                                                |
-| `reorderable`         | `boolean`                                                                                   | `true`                                 | `false`: no se puede arrastrar y ninguna otra columna puede cruzarla.                                                                                |
-| `hideable`            | `boolean`                                                                                   | `true`                                 | `false`: no aparece en `DataTableColumnToggle` ni en la opción "ocultar" del menú.                                                                   |
-| `defaultVisible`      | `boolean`                                                                                   | `true`                                 | Visibilidad inicial. El v-model y la persistencia tienen prioridad.                                                                                  |
-| `headerGroup`         | `string`                                                                                    | —                                      | Título de un [grupo de columnas](#encabezados-agrupados).                                                                                            |
-| `align`               | `'left' \| 'center' \| 'right'`                                                             | `defaultAlign` del renderer o `'left'` | Alineación de celdas y encabezado.                                                                                                                   |
-| `accessor`            | `(row: TRow) => CellValue`                                                                  | `row[key]`                             | De dónde se lee el valor.                                                                                                                            |
-| `format`              | `(value: CellValue, row: TRow, rowIndex: number) => string`                                 | —                                      | Texto que muestra la celda. Tiene que ser puro y barato. No se aplica a los agregados.                                                               |
-| `cellClass`           | `(value: CellValue, row: TRow, rowIndex: number) => string \| undefined`                    | —                                      | Clase extra en `.dt-cell`. La regla CSS tiene que ser global.                                                                                        |
-| `renderer`            | `string \| CellRenderer<TRow>`                                                              | `'text'`                               | Nombre registrado o instancia. Ver [Renderers](#renderers).                                                                                          |
-| `editable`            | `boolean`                                                                                   | `false`                                | Tiene que ser `true` para editar, vaciar o pegar en la columna.                                                                                      |
-| `editor`              | `'text' \| 'number' \| 'select' \| 'checkbox' \| 'date' \| 'tags' \| 'slot'`                | inferido                               | Control de edición. Ver [Editores](#editores-e-inferencia).                                                                                          |
-| `options`             | `readonly CellOption[]`                                                                     | —                                      | Valores posibles `{ value, label, color? }`. Los usan `badge`, `select`, `tags`, los editores `select` y `tags`, el pegado y las cabeceras de grupo. |
-| `min`/`max`/`step`    | `number`                                                                                    | —                                      | Atributos del input del editor `number`. No validan.                                                                                                 |
-| `validate`            | `(value: CellValue, row: TRow, rowIndex: number) => string \| boolean \| null \| undefined` | —                                      | Devuelve un mensaje o `false` para rechazar un valor nuevo. Ver [Validación](#validación).                                                           |
-| `parse`               | `(text: string, row: TRow, rowIndex: number) => CellValue`                                  | —                                      | Texto pegado → valor. `undefined` rechaza la celda. Ver [Pegar](#pegar-con-ctrlv).                                                                   |
-| `groupable`           | `boolean`                                                                                   | `true`                                 | `false`: la columna se descarta de `groupBy`. No la oculta.                                                                                          |
-| `aggregate`           | `'sum' \| 'avg' \| 'count' \| 'min' \| 'max' \| AggregationFn<TRow>`                        | —                                      | Cifra que la columna muestra en las cabeceras de grupo. Ver [Agregados](#agregados).                                                                 |
-| `formatAggregate`     | `(value: CellValue, column: DataTableColumn<TRow>) => string`                               | —                                      | Formato de la cifra agregada.                                                                                                                        |
+| Campo                 | Tipo                                                                                        | Por defecto                            | Qué hace                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`                 | `string`                                                                                    | —                                      | Id único de la columna y clave de datos por defecto (`row[key]`).                                                                                                                                                   |
+| `label`               | `string`                                                                                    | `key`                                  | Título del encabezado.                                                                                                                                                                                              |
+| `width`               | `number`                                                                                    | `defaultColumnWidth`                   | Ancho en px. Se acota a `[max(32, minWidth), min(4000, maxWidth)]`.                                                                                                                                                 |
+| `minWidth`/`maxWidth` | `number`                                                                                    | `32` / `4000`                          | Límites del ancho, también al redimensionar y al ajustar.                                                                                                                                                           |
+| `resizable`           | `boolean`                                                                                   | `false`                                | Tirador de ancho en el encabezado, [modo ancho](#cambiar-el-ancho-con-el-teclado) con el teclado y [doble clic de ajuste](#ajustar-al-contenido).                                                                   |
+| `sortable`            | `boolean \| 'menu'`                                                                         | `false`                                | `true`: el clic en el encabezado ordena. `'menu'`: solo desde el menú.                                                                                                                                              |
+| `comparator`          | `(a: TRow, b: TRow) => number`                                                              | —                                      | Comparador ascendente propio. Solo lo usa `sortRows`.                                                                                                                                                               |
+| `pinned`              | `'start' \| 'end'`                                                                          | —                                      | Anclaje inicial a un borde.                                                                                                                                                                                         |
+| `pinnable`            | `boolean \| 'start' \| 'end' \| 'menu'`                                                     | `false`                                | Botón de anclar en el encabezado y a qué borde lleva (`true` = `'start'`). `'menu'`: sin botón, solo desde el menú.                                                                                                 |
+| `menu`                | `boolean`                                                                                   | `true`                                 | `false` quita el menú de tres puntos de esta columna.                                                                                                                                                               |
+| `reorderable`         | `boolean`                                                                                   | `true`                                 | `false`: no se puede arrastrar y ninguna otra columna puede cruzarla.                                                                                                                                               |
+| `hideable`            | `boolean`                                                                                   | `true`                                 | `false`: no aparece en `DataTableColumnToggle` ni en la opción "ocultar" del menú.                                                                                                                                  |
+| `defaultVisible`      | `boolean`                                                                                   | `true`                                 | Visibilidad inicial. El v-model y la persistencia tienen prioridad.                                                                                                                                                 |
+| `headerGroup`         | `string`                                                                                    | —                                      | Título de un [grupo de columnas](#encabezados-agrupados).                                                                                                                                                           |
+| `align`               | `'left' \| 'center' \| 'right'`                                                             | `defaultAlign` del renderer o `'left'` | Alineación de celdas y encabezado.                                                                                                                                                                                  |
+| `accessor`            | `(row: TRow) => CellValue`                                                                  | `row[key]`                             | De dónde se lee el valor.                                                                                                                                                                                           |
+| `format`              | `(value: CellValue, row: TRow, rowIndex: number) => string`                                 | —                                      | Texto que muestra la celda. Tiene que ser puro y barato. No se aplica a los agregados.                                                                                                                              |
+| `cellClass`           | `(value: CellValue, row: TRow, rowIndex: number) => string \| undefined`                    | —                                      | Clase extra en `.dt-cell`. La regla CSS tiene que ser global.                                                                                                                                                       |
+| `renderer`            | `string \| CellRenderer<TRow>`                                                              | `'text'`                               | Nombre registrado o instancia. Ver [Renderers](#renderers).                                                                                                                                                         |
+| `editable`            | `boolean`                                                                                   | `false`                                | Tiene que ser `true` para editar, vaciar o pegar en la columna.                                                                                                                                                     |
+| `editor`              | `'text' \| 'number' \| 'select' \| 'checkbox' \| 'date' \| 'tags' \| 'slot'`                | inferido                               | Control de edición. Ver [Editores](#editores-e-inferencia).                                                                                                                                                         |
+| `options`             | `readonly CellOption[] \| CellOptionsResolver<TRow>`                                        | —                                      | Valores posibles `{ value, label, color? }`, fijos o por fila. Los usan `badge`, `select`, `tags`, los editores `select` y `tags`, el pegado y las cabeceras de grupo. Ver [Opciones por fila](#opciones-por-fila). |
+| `min`/`max`/`step`    | `number`                                                                                    | —                                      | Atributos del input del editor `number`. No validan.                                                                                                                                                                |
+| `validate`            | `(value: CellValue, row: TRow, rowIndex: number) => string \| boolean \| null \| undefined` | —                                      | Devuelve un mensaje o `false` para rechazar un valor nuevo. Ver [Validación](#validación).                                                                                                                          |
+| `parse`               | `(text: string, row: TRow, rowIndex: number) => CellValue`                                  | —                                      | Texto pegado → valor. `undefined` rechaza la celda. Ver [Pegar](#pegar-con-ctrlv).                                                                                                                                  |
+| `groupable`           | `boolean`                                                                                   | `true`                                 | `false`: la columna se descarta de `groupBy`. No la oculta.                                                                                                                                                         |
+| `aggregate`           | `'sum' \| 'avg' \| 'count' \| 'min' \| 'max' \| AggregationFn<TRow>`                        | —                                      | Cifra que la columna muestra en las cabeceras de grupo. Ver [Agregados](#agregados).                                                                                                                                |
+| `formatAggregate`     | `(value: CellValue, column: DataTableColumn<TRow>) => string`                               | —                                      | Formato de la cifra agregada.                                                                                                                                                                                       |
 
 `CellValue` es `string | number | boolean | null | undefined | Date | readonly (string | number)[]`.
 Un objeto no es un `CellValue`: mapéalo con `accessor` o `format` (la excepción es `avatar`, que lee
@@ -376,6 +380,41 @@ Un objeto no es un `CellValue`: mapéalo con `accessor` o `format` (la excepció
 
 `CellOption` es `{ value: string | number | boolean; label: string; color?: string }`. Para `color`
 usa `COLOR_TOKENS.red`, `.blue`, `.amber`, `.green`, `.purple` o `.neutral`, o cualquier color CSS.
+
+### Opciones por fila
+
+Cuando las opciones de una columna dependen de otra —los puestos de un área, los modelos de una
+marca—, `options` puede ser una función de la fila: `(row, rowIndex) => CellOption[]`.
+
+```ts
+const puestosPorArea: Record<string, CellOption[]> = { A: [...], B: [...] }
+
+const columnas: DataTableColumn<Punto>[] = [
+  { key: 'area', label: 'Área', editable: true, options: AREAS },
+  {
+    key: 'puesto',
+    label: 'Puesto',
+    editable: true,
+    editor: 'select',
+    options: (row) => puestosPorArea[row.area] ?? [],
+  },
+]
+```
+
+Todo resuelve contra las opciones de SU fila: la etiqueta que se pinta y la que se copia, el
+desplegable del editor `select`, las `options` que recibe el slot `#editor` y la lectura de un texto
+pegado, que rechaza una etiqueta que esa fila no ofrece. Al pegar "área ⇥ puesto" de una vez, el
+puesto se lee contra el área recién pegada —ver
+[Las reglas ven la fila del gesto](#las-reglas-ven-la-fila-del-gesto)—. La cabecera de un grupo por
+esa columna usa las opciones de la primera fila del grupo.
+
+La función corre en el pintado y en cada celda de un pegado: devuelve una lista ya armada por clave y
+no la filtres en cada llamada. Devolver siempre el mismo array para la misma clave le ahorra además al
+desplegable rehacer sus opciones.
+
+Con una función, `column.options` deja de ser siempre un array: para leer las opciones desde un
+editor de slot usa su prop `options`, y desde un [renderer propio](#renderer-propio), `ctx.options`.
+Las dos ya vienen resueltas.
 
 `renderer` (cómo se ve) y `editor` (cómo se edita) son independientes: un `badge` puede editarse con
 un `select` y una celda de texto puede no ser editable.
@@ -457,14 +496,23 @@ registrado no puede depender de la forma de la fila: su `update` tiene que ser g
 
 Lo que recibe `update` y `text` (`CellRenderContext<TRow>`):
 
-| Campo       | Tipo                    | Qué es                                                                |
-| ----------- | ----------------------- | --------------------------------------------------------------------- |
-| `value`     | `CellValue`             | El valor ya leído por `accessor`.                                     |
-| `raw`       | `unknown`               | El valor sin normalizar: donde sobreviven arrays y objetos. Valídalo. |
-| `row`       | `TRow`                  | La fila completa.                                                     |
-| `rowIndex`  | `number`                | Índice dentro de `rows`.                                              |
-| `column`    | `DataTableColumn<TRow>` | La columna, con `format` y `options`.                                 |
-| `isEditing` | `boolean`               | Si esta celda tiene el editor abierto encima.                         |
+| Campo       | Tipo                                 | Qué es                                                                                       |
+| ----------- | ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `value`     | `CellValue`                          | El valor ya leído por `accessor`.                                                            |
+| `raw`       | `unknown`                            | El valor sin normalizar: donde sobreviven arrays y objetos. Valídalo.                        |
+| `row`       | `TRow`                               | La fila completa.                                                                            |
+| `rowIndex`  | `number`                             | Índice dentro de `rows`.                                                                     |
+| `column`    | `DataTableColumn<TRow>`              | La columna, con `format` y `options`.                                                        |
+| `options`   | `readonly CellOption[] \| undefined` | Las opciones de la celda, ya resueltas para esta fila. `undefined` si la columna no declara. |
+| `isEditing` | `boolean`                            | Si esta celda tiene el editor abierto encima.                                                |
+
+Para buscar la opción de un valor, lee `ctx.options` y no `ctx.column.options`: con
+[opciones por fila](#opciones-por-fila) esta última es una función, y `ctx.options` ya trae lo que
+devolvió para la fila que se pinta —la misma lista que usan el copiado y el editor—:
+
+```ts
+const label = ctx.options?.find((option) => option.value === ctx.value)?.label ?? ''
+```
 
 Los ocho renderers incluidos se exportan como instancias (`badgeRenderer`, `avatarRenderer`, …) para
 componer sobre ellos, junto con `createTextRenderer()` y `resolveRenderer()`. El de la columna de
@@ -504,7 +552,7 @@ beforeEdit ── event.cancel() ──► no se abre nada (ni afterEdit)
   │
   ▼
 editor abierto
-  ├─ Enter · perder el foco · elegir en un select · la fila sale de la vista ──► confirma
+  ├─ Enter · Tab · perder el foco · elegir en un select · la fila sale de la vista ──► confirma
   └─ Escape ──► descarta
   │
   ▼
@@ -519,9 +567,20 @@ editCommit  (solo si el valor cambió)
 - **`afterEdit` sale antes que `editCommit`.**
 - **El valor vuelve con el tipo del anterior**: una columna numérica entrega un `number`, y un
   `select` entrega el `option.value` tipado.
-- **`Enter` confirma y baja una fila**, como en una hoja de cálculo. `Escape` descarta y la selección
-  se queda.
-- Con el editor abierto, todas las teclas son del control.
+- **Confirmar mueve la selección, como en una hoja de cálculo**:
+
+  | Tecla con el editor abierto | Confirma y va a                                                    |
+  | --------------------------- | ------------------------------------------------------------------ |
+  | `Enter`                     | La celda de abajo.                                                 |
+  | `Shift`+`Enter`             | La celda de arriba.                                                |
+  | `Tab`                       | La de la derecha; al final de la fila, la primera de la siguiente. |
+  | `Shift`+`Tab`               | La de la izquierda; al principio, la última de la fila anterior.   |
+  | `Escape`                    | Descarta. La selección se queda.                                   |
+
+  Un valor que `validate` rechaza deja el editor abierto y la selección quieta. En modo fila `Tab`
+  sigue saliendo de la tabla. El editor de slot pide lo mismo con `commit(valor, { move })`.
+
+- Con el editor abierto, las demás teclas son del control.
 - Una fila del modo servidor que todavía no llega no se puede editar.
 
 ```ts
@@ -541,7 +600,7 @@ Sin `column.editor`, el editor se infiere del valor actual de la celda, en este 
 | 3   | el valor es `boolean`                       | `checkbox` |
 | 4   | el valor es `number`                        | `number`   |
 | 5   | el valor es `Date`                          | `date`     |
-| 6   | `column.options` no está vacío              | `select`   |
+| 6   | `column.options` no está vacío o es función | `select`   |
 | 7   | cualquier otro caso                         | `text`     |
 
 - `checkbox` no abre un control: la casilla está en la celda y un clic, `Enter` o `F2` la alternan
@@ -572,7 +631,9 @@ Si la columna tiene `options`, debajo del input se abre un panel de casillas:
 
 `column.validate(value, row, rowIndex)` devuelve un mensaje para rechazar el valor, o `false` para
 usar `labels.invalidValue`; cualquier otra cosa lo acepta. Recibe el valor ya convertido (un `number`
-en una columna numérica) y no corre si el valor es igual al anterior.
+en una columna numérica) y no corre si el valor es igual al anterior. En un gesto de varias celdas,
+`row` es la fila con lo que el gesto ya le escribió a la izquierda: ver
+[Las reglas ven la fila del gesto](#las-reglas-ven-la-fila-del-gesto).
 
 ```ts
 {
@@ -582,14 +643,14 @@ en una columna numérica) y no corre si el valor es igual al anterior.
 }
 ```
 
-| Vía                                            | Qué pasa con un valor rechazado                                                              |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `Enter` o elegir una opción en el editor       | El editor queda abierto, con borde rojo y el mensaje bajo la celda. `Enter` no baja de fila. |
-| Salir de la celda (clic afuera, `Tab`, scroll) | Se descarta como un `Escape`: `afterEdit` con `canceled: true`, sin `editCommit`.            |
-| La casilla de una columna `checkbox`           | No se alterna.                                                                               |
-| Slot `#editor`                                 | `commit()` no cierra; el slot recibe el mensaje en `error`.                                  |
-| Vaciar o pegar                                 | La celda queda fuera del lote; las demás siguen.                                             |
-| Deshacer / rehacer                             | No se valida (es un valor que ya estuvo en la celda).                                        |
+| Vía                                             | Qué pasa con un valor rechazado                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `Enter`, `Tab` o elegir una opción en el editor | El editor queda abierto, con borde rojo y el mensaje bajo la celda. La selección no se mueve. |
+| Salir de la celda (clic afuera, scroll)         | Se descarta como un `Escape`: `afterEdit` con `canceled: true`, sin `editCommit`.             |
+| La casilla de una columna `checkbox`            | No se alterna.                                                                                |
+| Slot `#editor`                                  | `commit()` no cierra ni mueve; el slot recibe el mensaje en `error`.                          |
+| Vaciar, pegar o rellenar                        | La celda queda fuera del lote; las demás siguen.                                              |
+| Deshacer / rehacer                              | No se valida (es un valor que ya estuvo en la celda).                                         |
 
 Cada rechazo emite `editInvalid` (`{ source, row, rowIndex, column, columnKey, value, message }`). El
 control rechazado lleva `aria-invalid="true"` y `aria-describedby` hacia el mensaje, que es
@@ -602,11 +663,11 @@ la tabla: despacha por `column.key`.
 
 ```vue
 <DataTable :rows="rows" :columns="columns" row-key="id" @edit-commit="onEditCommit">
-  <template #editor="{ column, value, error, commit, cancel }">
+  <template #editor="{ column, value, options, error, commit, cancel }">
     <MiSelector
       v-if="column.key === 'status'"
       :model-value="value"
-      :items="column.options"
+      :items="options"
       :error="error"
       @update:model-value="commit"
       @close="cancel"
@@ -615,13 +676,55 @@ la tabla: despacha por `column.key`.
 </DataTable>
 ```
 
-| Entrada                                         | Efecto                                                       |
-| ----------------------------------------------- | ------------------------------------------------------------ |
-| Doble clic, `Enter`, `F2`, escribir un carácter | Abre (después de `beforeEdit`). El carácter no se siembra.   |
-| `commit(valor)` / `cancel()`                    | Cierra confirmando / descartando.                            |
-| `Escape` dentro del slot                        | Igual que `cancel()`, sin que el componente haga nada.       |
-| Clic en otra celda, la fila sale de la vista    | Cierra sin escribir: `afterEdit` con el valor original.      |
-| **Perder el foco**                              | **Nada**, para que un desplegable en un portal no lo cierre. |
+`options` son las de la columna ya resueltas para esa fila: úsalas en lugar de `column.options`, que
+puede ser una [función de la fila](#opciones-por-fila).
+
+| Entrada                                         | Efecto                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------------ |
+| Doble clic, `Enter`, `F2`, escribir un carácter | Abre (después de `beforeEdit`). El carácter no se siembra.         |
+| `commit(valor)` / `cancel()`                    | Cierra confirmando / descartando.                                  |
+| `commit(valor, { move })`                       | Confirma y mueve la selección como las teclas del editor incluido. |
+| `Escape` dentro del slot                        | Igual que `cancel()`, sin que el componente haga nada.             |
+| Clic en otra celda, la fila sale de la vista    | Cierra sin escribir: `afterEdit` con el valor original.            |
+| **Perder el foco**                              | **Nada**, para que un desplegable en un portal no lo cierre.       |
+
+**El teclado de captura en un slot.** Las teclas dentro del slot son de tu componente: la tabla no
+puede saber si un `Enter` eligió una opción de tu lista o terminó la edición, ni cuál es el valor que
+tiene tu control. Por eso no las interpreta ella; tu componente llama a `commit` con `move` cuando
+corresponde, y la tabla hace lo mismo que con el editor incluido —confirma, y si `validate` acepta,
+mueve—:
+
+| `move`    | Tecla equivalente | Va a                                                              |
+| --------- | ----------------- | ----------------------------------------------------------------- |
+| `'right'` | `Tab`             | La celda de la derecha; al final de la fila, la primera de abajo. |
+| `'left'`  | `Shift`+`Tab`     | La de la izquierda; al principio, la última de la fila de arriba. |
+| `'down'`  | `Enter`           | La de abajo.                                                      |
+| `'up'`    | `Shift`+`Enter`   | La de arriba.                                                     |
+
+```vue
+<!-- En la tabla: el componente avisa el valor y hacia dónde seguir. -->
+<template #editor="{ column, value, commit }">
+  <MiHora
+    v-if="column.key === 'hora'"
+    :value="value"
+    @confirm="(hora, move) => commit(hora, { move })"
+  />
+</template>
+```
+
+```ts
+// Adentro de MiHora, sobre su input:
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Tab' && event.key !== 'Enter') return
+  event.preventDefault()
+  const move =
+    event.key === 'Tab' ? (event.shiftKey ? 'left' : 'right') : event.shiftKey ? 'up' : 'down'
+  emit('confirm', leerHora(input.value), move)
+}
+```
+
+`Escape` no hace falta: burbujea hasta la caja del slot y la tabla cancela sola. Un `Tab` que tu
+componente no atiende sigue siendo del navegador y saca el foco del slot, que no cierra por perderlo.
 
 - Sin el slot declarado, esa columna no abre ningún editor.
 - `commit` entrega el valor tal cual, sin coerción. Una lista de textos o números es un `CellValue`
@@ -633,8 +736,9 @@ la tabla: despacha por `column.key`.
 
 ## Escribir en varias celdas
 
-Vaciar, pegar, rellenar, deshacer y rehacer emiten **un** `cellsCommit` por gesto con la lista de
-cambios. `applyEdits` los aplica con una sola copia del array y una copia por fila tocada:
+Vaciar, pegar, rellenar —con el tirador o con `Ctrl`+`D`—, deshacer y rehacer emiten **un**
+`cellsCommit` por gesto con la lista de cambios. `applyEdits` los aplica con una sola copia del array
+y una copia por fila tocada:
 
 ```ts
 import { applyEdits } from 'vue-tablekit'
@@ -646,9 +750,12 @@ function onCellsCommit(event: CellsCommitEvent<Invoice>): void {
 ```
 
 - Cada cambio tiene la forma de un `editCommit` (`row`, `rowIndex` en `rows`, `column`, `columnKey`,
-  `oldValue`, `newValue`) y `event.source` dice el gesto: `'clear'`, `'paste'`, `'fill'`, `'undo'` o `'redo'`.
+  `oldValue`, `newValue`) y `event.source` dice el gesto: `'clear'`, `'paste'`, `'fill'`,
+  `'fillDown'`, `'undo'` o `'redo'`.
 - Solo viajan las celdas que cambian de verdad. Cada una pasa por `editable`, por `beforeEdit` (que
   puede vetarla) y por `validate`. Un gesto que no cambia nada no emite nada.
+- Las reglas de cada celda ven la fila con lo que el gesto ya le escribió a la izquierda: ver
+  [Las reglas ven la fila del gesto](#las-reglas-ven-la-fila-del-gesto).
 - `applyEdits` escribe `row[columnKey]`: una columna con `accessor` la tienes que aplicar a mano. Los
   huecos del modo servidor se omiten.
 - **Sin `@cells-commit`, estos gestos no dejan nada escrito.**
@@ -672,13 +779,23 @@ Solo en modo `'cell'`. Con el editor abierto, la tecla es del input.
 Pega texto con tabuladores entre celdas y saltos entre filas (lo que copia cualquier hoja de
 cálculo, y esta tabla) desde la esquina superior izquierda de la selección.
 
-- Ocupa lo que mide el bloque, recortado por el borde de la tabla: no agrega filas ni columnas.
+- Ocupa lo que mide el bloque, recortado por el borde de la tabla: no agrega columnas, y filas solo
+  si declaras [`appendRows`](#pegar-más-filas-de-las-que-hay).
 - Si la selección es un múltiplo exacto del bloque, lo repite (copia una celda, selecciona cien y
   pega).
 - Cada texto se lee según el editor de la columna: números con separadores y moneda (`$1,234.50`,
-  `1.234,5`, `45%`), fechas `YYYY-MM-DD` o lo que entienda `Date`, casillas (`true`/`false`,
-  `1`/`0`, `sí`/`no`, `x`), opciones por valor o por etiqueta, y listas separadas por comas. Una
-  celda vacía del bloque vacía la celda.
+  `1.234,5`, `45%`), fechas, casillas (`true`/`false`, `1`/`0`, `sí`/`no`, `x`), opciones por valor
+  o por etiqueta, y listas separadas por comas. Una celda vacía del bloque vacía la celda.
+- **Números.** Con los dos separadores a la vista, el último es el decimal. Una coma sola, en una
+  configuración regional con punto decimal, es de miles solo si agrupa de a tres cifras (`1,500`,
+  `1,234,567`); si no, es el decimal: `3,5` es `3.5`, no `35`.
+- **Fechas.** `YYYY-MM-DD`; `D/M/AAAA` —también con `-` o `.`— en el orden de día y mes de la
+  configuración regional (`01/09/2026` es el 1 de septiembre en es-MX y el 9 de enero en en-US); y
+  lo demás, como lo entienda `Date`. Una fecha imposible (`31/02/2026`) se rechaza en lugar de
+  pasar al mes siguiente. En una columna de texto se guarda el día del calendario que se escribió,
+  sin correrlo por la zona horaria.
+- Una columna que muestra etiquetas de opciones —un `badge` sobre números o sobre `true`/`false`—
+  lee primero la etiqueta, así que pegar lo copiado devuelve el valor.
 - `column.parse(text, row, rowIndex)` reemplaza esa lectura; devolver `undefined` rechaza la celda.
 - Lo que no se puede leer queda fuera y emite `editInvalid` con `labels.invalidValue`.
 - Las cabeceras de grupo se omiten sin consumir una línea; una fila del modo servidor que no ha
@@ -686,6 +803,73 @@ cálculo, y esta tabla) desde la esquina superior izquierda de la selección.
 - Al terminar, lo pegado queda seleccionado.
 
 Solo en modo `'cell'`. Con el editor abierto, el pegado es del input.
+
+**Copiar y pegar de vuelta devuelve el mismo dato**, con su tipo: un número sigue siendo número
+—con todos sus decimales, aunque la celda muestre tres—, una casilla un booleano, una opción su
+valor, una lista sus valores, una fecha esa fecha. Con una columna propia vale lo mismo si `parse`
+es la inversa de `format`: se copia lo que muestra `format` y `parse` lo devuelve al valor.
+
+### Pegar más filas de las que hay
+
+Por defecto un bloque más largo que lo que queda de tabla se recorta. Con la prop `appendRows`, la
+tabla te pide las filas que faltan, espera a que lleguen por `rows` y el **mismo** pegado sigue sobre
+ellas:
+
+```vue
+<script setup lang="ts">
+function appendRows(count: number): void {
+  puntos.value = [...puntos.value, ...Array.from({ length: count }, nuevoPunto)]
+}
+</script>
+
+<template>
+  <DataTable
+    :rows="puntos"
+    :columns="columnas"
+    row-key="id"
+    :append-rows="appendRows"
+    @cells-commit="onCellsCommit"
+  />
+</template>
+```
+
+- Agrégalas **al final** de tu array. Si `appendRows` devuelve una promesa —crearlas en el servidor,
+  por ejemplo—, la tabla espera a que se resuelva.
+- Tienen que quedar al final de `rows` **tal como se muestra**. La tabla no sabe cuáles son las
+  nuevas: sigue pegando en las posiciones que venían después de la última. Si `rows` sale de un
+  `computed` que ordena o filtra, las filas vacías pueden caer en otro lugar —o no aparecer— y el
+  pegado escribiría sobre filas que ya existían.
+- Todo llega en **un** `cellsCommit` con `source: 'paste'`, filas nuevas incluidas, y lo pegado
+  queda seleccionado entero. Las celdas nuevas pasan por `editable`, `beforeEdit` y `validate` como
+  las demás.
+- Si agregas menos de las pedidas, se pega lo que entra.
+- No se piden filas con agrupación activa (una fila nueva no tiene grupo donde caer), en modo
+  servidor, ni cuando la selección repite el bloque como mosaico.
+- `Ctrl`+`Z` revierte los valores pegados, no las filas agregadas.
+- Mientras se espera, otro pegado se ignora.
+
+### Las reglas ven la fila del gesto
+
+En un gesto de varias celdas —pegar, vaciar, rellenar con el tirador o con `Ctrl`+`D`— `parse`,
+`validate` y las [opciones por fila](#opciones-por-fila) de cada celda reciben la fila **como va a
+quedar** con lo que el mismo gesto ya le escribió a su izquierda. Pegar `B ⇥ Chofer` sobre una fila
+del área A lee "Chofer" contra los puestos del área B:
+
+```ts
+{
+  key: 'puesto',
+  editable: true,
+  editor: 'select',
+  options: (row) => puestosPorArea[row.area] ?? [],
+  validate: (value, row) => (row.area === 'B' && value === 1 ? 'No existe en B' : null),
+}
+```
+
+- Es una copia de la fila con `row[columnKey]` escrito, como la armaría `applyEdits`. El `row` de
+  cada cambio del `cellsCommit` sigue siendo el objeto de `rows`, que es sobre el que escribes.
+- Solo cuentan los cambios aceptados: una celda rechazada no llega a la fila, y la de su derecha la ve
+  como estaba.
+- Rige igual para una columna con `editor: 'slot'`: su `parse` y su `validate` reciben la misma fila.
 
 ### Rellenar con el tirador
 
@@ -719,6 +903,27 @@ Excel. Arrastrarlo copia lo seleccionado sobre las celdas que recorre el puntero
 
 Aun encendido, el tirador no aparece sin `rangeSelection`, fuera de `selectionMode: 'cell'`, si
 ninguna columna visible es `editable`, con el editor abierto ni con varios rangos sumados.
+
+### Rellenar hacia abajo con `Ctrl`+`D`
+
+`Ctrl`+`D` —o `Cmd`+`D`— copia la primera fila de la selección sobre las demás, columna por columna,
+como en una hoja de cálculo. Con una sola fila seleccionada copia la de arriba. No hay nada que
+encender.
+
+- Copia **valores**, no el texto que se ve: una fecha sigue siendo esa fecha, un número ese número, y
+  el valor de una columna con editor de slot conserva su tipo. Cada celda recibe una copia propia de
+  una fecha o de una lista.
+- Llega en **un** `cellsCommit` con `source: 'fillDown'`, pasa por `editable`, `beforeEdit` (con
+  `source: 'fillDown'`) y `validate`, y `Ctrl`+`Z` lo deshace entero.
+- Rellena cada rango sumado con `Ctrl`+clic. Las cabeceras de grupo no cuentan como fila, ni de
+  origen ni de destino, y la columna de casillas se salta.
+- Con agrupación, una sola fila copia la de arriba solo si es de su mismo grupo: en la primera fila de
+  un grupo `Ctrl`+`D` no hace nada, igual que en la primera de la tabla.
+- La selección no se mueve. En modo `'row'` la tecla queda para el navegador, y con el editor
+  abierto es del input.
+
+El tirador de relleno también copia valores dentro de una misma columna; al cruzar de columna viaja
+como texto, como un pegado.
 
 ### Deshacer y rehacer
 
@@ -793,6 +998,7 @@ En modo `'cell'`, con el foco en la tabla. `Cmd` vale lo mismo que `Ctrl`.
 | `Escape`                                               | Con editor: descarta. Sin editor: no hace nada (la selección se queda).          |
 | `Supr` / `Retroceso`                                   | Vacía la selección.                                                              |
 | `Ctrl`+`C` / `Ctrl`+`V`                                | Copia la selección / pega.                                                       |
+| `Ctrl`+`D`                                             | [Rellena hacia abajo](#rellenar-hacia-abajo-con-ctrld) la selección.             |
 | `Ctrl`+`Z` / `Ctrl`+`Y` / `Ctrl`+`Shift`+`Z`           | Deshace / rehace / rehace.                                                       |
 | `Ctrl`+`A`                                             | Selecciona toda la grilla (con `rangeSelection`).                                |
 | `Shift`+ flecha / `Inicio` / `Fin` / `RePág` / `AvPág` | Extiende el rango en vez de mover la selección (con `rangeSelection`).           |
@@ -800,7 +1006,8 @@ En modo `'cell'`, con el foco en la tabla. `Cmd` vale lo mismo que `Ctrl`.
 
 - Las columnas ocultas se saltan.
 - Moverse con el teclado desplaza lo mínimo para traer la celda a la vista; no centra.
-- Con el editor abierto, las teclas son del control.
+- Con el editor abierto, las teclas son del control, salvo `Enter`, `Tab` —con o sin `Shift`— y
+  `Escape`, que confirman y mueven o descartan: ver [Ciclo de edición](#ciclo-de-edición).
 
 ### Rangos
 
@@ -856,7 +1063,8 @@ navegador.
 
 - Se copia **lo que se ve**: la etiqueta de un `badge`, el número con separadores, las etiquetas de
   `tags` en una celda. Sale del `text()` de cada renderer, así que incluye filas que no están
-  pintadas.
+  pintadas. La excepción son los decimales del renderer `number`: la celda muestra hasta tres y se
+  copian todos, para que pegar de vuelta dé el mismo número.
 - Un valor con tabulador, salto de línea o comillas va entre comillas, con las comillas internas
   duplicadas.
 - Las cabeceras de grupo no aportan línea. Las filas del modo servidor que no han llegado salen
@@ -1465,6 +1673,23 @@ const rowHeight = computed(() => {
   quedan siempre en **px base**: ajustar una columna al 150% no la infla al volver al 100%.
 - No se persiste: guárdalo tú si quieres.
 
+#### Con la rueda
+
+Con `wheel-zoom`, `Ctrl`+rueda y el pellizco del trackpad sobre la tabla cambian el zoom:
+
+```vue
+<DataTable v-model:zoom="zoom" wheel-zoom :rows="rows" :columns="columns" row-key="id" />
+```
+
+- Viene apagada porque la tabla solo **pide** el zoom por `update:zoom`: necesita `v-model:zoom`.
+  Con un `:zoom` fijo no cambiaría nada y le quitaría al navegador su propio `Ctrl`+rueda.
+- Una muesca del mouse cambia un 10%, como el zoom del navegador. El pellizco es continuo: sus
+  deltas chicos se acumulan. Lo que se emite es múltiplo de `0.05`, dentro de `[0.5, 2]`.
+- Tomado el gesto, la página nunca se amplía, ni siquiera en los topes. Una rueda sin `Ctrl` sigue
+  scrolleando; `Cmd` no cuenta (en Mac el pellizco también llega con `Ctrl`).
+- Cuando el valor vuelve como prop, el scroll se ajusta para que lo que estaba bajo el cursor siga
+  ahí. Si cambias el zoom por otro lado (tus botones), la rueda siguiente arranca de ese valor.
+
 ### Pantalla completa
 
 `fullscreen` (`v-model:fullscreen`) usa la Fullscreen API nativa sobre `.dt-root` (no un
@@ -1619,6 +1844,42 @@ Para `--dt-copy-flash-color` por tema, apunta a `.dt-root[data-theme='dark']` o 
 Sin `focusRing` y sin celda activa, quien llega a la tabla con `Tab` no ve ninguna señal de foco:
 enciéndelo, o entra con una celda ya seleccionada (`v-model:active-cell` o `selectCell()`).
 
+### Estado de una fila (`rowClass`)
+
+`rowClass(row, rowIndex)` pone clases propias en cada fila de datos. Devuelve lo mismo que acepta un
+`:class`: un texto, una lista o un objeto de banderas. En la lista, `false`, `null` y `undefined` se
+descartan, así que `[row.error && 'fila-error', 'fila-base']` funciona como en Vue. Sirve para marcar el estado de una fila sin
+tocar sus celdas —pendiente, con error, guardada—:
+
+```ts
+const estadoDeFila = (row: Punto) => ({
+  'fila-pendiente': row.estado === 'pendiente',
+  'fila-error': errores.value.has(row.id),
+})
+```
+
+```vue
+<DataTable :rows="puntos" :columns="columnas" row-key="id" :row-class="estadoDeFila" />
+```
+
+```css
+/* Global: las filas no llevan el atributo de <style scoped>. */
+.dt-row.fila-pendiente {
+  box-shadow: inset 3px 0 0 var(--dt-color-amber);
+}
+.dt-row.fila-error {
+  box-shadow: inset 3px 0 0 var(--dt-color-red);
+}
+```
+
+- Las clases van sobre `.dt-row`, junto a las de la tabla, que no se pisan. Se sacan al reciclar el
+  nodo: una fila nunca hereda las de la anterior.
+- `rowIndex` indexa `rows`. No se aplica a las cabeceras de grupo ni a las filas que el servidor no
+  mandó.
+- Corre en cada pintado, una vez por fila visible: tiene que ser barata. Si depende de algo que no
+  está en la fila —un mapa de errores, como arriba—, pasa una función nueva cuando ese algo cambie
+  (un `computed` que la devuelva) o llama a `refresh()`.
+
 ### Clases y atributos
 
 | Clase                                                                      | Qué marca                                                              |
@@ -1665,8 +1926,8 @@ Atributos que la tabla escribe (sirven para CSS):
 ### Reglas CSS globales
 
 - Las filas, celdas y cabeceras de grupo las crea la tabla fuera del render de Vue, así que no llevan
-  el atributo de `<style scoped>`: **las reglas para `cellClass`, `.dt-row--stripe` o los grupos
-  tienen que ser globales** (o usar `:deep()`).
+  el atributo de `<style scoped>`: **las reglas para `cellClass`, `rowClass`, `.dt-row--stripe` o
+  los grupos tienen que ser globales** (o usar `:deep()`).
 - Dentro de `.dt-root` rige `[hidden] { display: none !important }`: la tabla oculta nodos
   reciclados con `hidden`, así que no pongas `display` sobre un nodo que pueda llevarlo.
 
@@ -1725,7 +1986,7 @@ Agrupar, alturas variables, zoom y persistencia no cuestan nada mientras no se u
 | -------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Filtrado y búsqueda                                | Filtra antes de pasar `rows`; en modo servidor, cambia la consulta y vacía `rows`.     |
 | Componente Vue por celda                           | Renderer nativo para lo que se ve siempre; slot `#editor` para editar.                 |
-| Series al rellenar (`1, 2` → `3, 4`, fechas)       | El tirador copia; no continúa series.                                                  |
+| Series al rellenar (`1, 2` → `3, 4`, fechas)       | El tirador y `Ctrl`+`D` copian; no continúan series.                                   |
 | Pivoteo                                            | Fuera de alcance.                                                                      |
 | Mover columnas con el teclado                      | Escribe `columnOrder` desde tu propia UI.                                              |
 | Alto de fila medido del contenido                  | Las alturas se declaran con `rowHeight`.                                               |
@@ -1760,9 +2021,10 @@ Agrupar, alturas variables, zoom y persistencia no cuestan nada mientras no se u
 
 Tipos: `DataTableProps`, `DataTableColumn`, `DataTableInstance`, `DataTableLabels`, `DataTableTheme`,
 `DataTableVariant`, `DataTableRadius`, `SelectionMode`, `FillHandleMode`, `SelectionColumnOptions`, `CellValue`,
-`CellValueList`, `CellAlign`, `CellLayout`, `CellOption`, `CellEditorType`, `CellEditorSlotProps`,
-`CellPosition`, `CellRange`, `CellRenderer`, `CellRenderContext`, `CellRendererHandle`,
-`AnyCellRenderer`, `CellRendererFactory`, `RowHeightResolver`, `RowKey`, `RowSelectionState`,
+`CellValueList`, `CellAlign`, `CellLayout`, `CellOption`, `CellOptionsResolver`, `CellEditorType`,
+`CellEditorSlotProps`, `CellEditorMove`, `CellEditorCommitOptions`, `CellPosition`, `CellRange`,
+`CellRenderer`, `CellRenderContext`, `CellRendererHandle`, `AnyCellRenderer`, `CellRendererFactory`,
+`RowHeightResolver`, `RowClassValue`, `RowKey`, `RowSelectionState`,
 `SortState`, `ColumnSort`, `SortDirection`, `ColumnPin`, `ColumnPinState`, `ColumnVisibilityState`,
 `ColumnWidthState`, `DataTablePersistOptions`, `DataTableStorageAdapter`, `PersistedTableState`,
 `GroupByState`, `GroupIdSegment`, `GroupRow`, `DataRow`, `FlatRow`, `BuiltInAggregation`,
@@ -1782,8 +2044,15 @@ de cada versión están en `CHANGELOG.md`.
 
 ```ts
 type CellValue = string | number | boolean | null | undefined | Date | readonly (string | number)[]
-type EditSource = 'editor' | 'clear' | 'paste' | 'undo' | 'redo'
+type EditSource = 'editor' | 'clear' | 'paste' | 'fill' | 'fillDown' | 'undo' | 'redo'
 type BatchEditSource = Exclude<EditSource, 'editor'>
+type CellEditorMove = 'right' | 'left' | 'down' | 'up'
+type RowClassValue =
+  | string
+  | readonly (string | false | null | undefined)[]
+  | Readonly<Record<string, boolean>>
+  | null
+  | undefined
 
 interface CellPosition {
   rowIndex: number // posición en la secuencia VISIBLE
